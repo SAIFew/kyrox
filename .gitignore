@@ -1,0 +1,32 @@
+.venv/
+.env
+.env.*
+!.env.example
+logs/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+test-results/
+*.py[cod]
+.DS_Store
+Thumbs.db
+
+# Internal workspace instructions, rules, planning, and private documentation
+AGENTS.md
+.agents/
+planning/
+docs/
+
+# Credential and key patterns
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+keystore/
+secrets/
+mnemonic*
+private_key*
