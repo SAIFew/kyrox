@@ -1,4 +1,4 @@
-"""Unit and MCP integration tests for KYROX Day 4 stock information tool."""
+"""Unit and MCP integration tests for KYROX stock tools (get_stock_info and list_stocks)."""
 
 from __future__ import annotations
 
@@ -177,11 +177,87 @@ def test_hello_kyrox_regression() -> None:
     assert server.hello_kyrox("Saif") == "Hello Saif, KYROX is live."
 
 
+def test_list_stocks_returns_all_configured_records_with_exact_fields() -> None:
+    raw_records = load_stocks()
+    result = server.list_stocks()
+
+    assert isinstance(result, list)
+    assert len(result) == len(raw_records) == 3
+
+    for summary, original in zip(result, raw_records, strict=True):
+        assert set(summary.keys()) == {"ticker", "name", "reference_value"}
+        assert summary["ticker"] == original["ticker"]
+        assert summary["name"] == original["stock"]
+        assert summary["reference_value"] == original["reference_value"]
+
+    assert result == [
+        {"ticker": "tAAPL", "name": "Test Apple", "reference_value": 230.0},
+        {"ticker": "tTSLA", "name": "Test Tesla", "reference_value": 250.0},
+        {"ticker": "tNVDA", "name": "Test Nvidia", "reference_value": 140.0},
+    ]
+
+
+def test_list_stocks_reflects_custom_data_source_and_preserves_order(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    custom_path = tmp_path / "custom_stocks.json"
+    custom_payload = [
+        {
+            "ticker": "tMSFT",
+            "stock": "Test Microsoft",
+            "reference_value": 415.5,
+            "token_address": "0x0000000000000000000000000000000000000001",
+        },
+        {
+            "ticker": "tGOOG",
+            "stock": "Test Alphabet",
+            "reference_value": 180.25,
+            "token_address": "0x0000000000000000000000000000000000000002",
+        },
+    ]
+    custom_path.write_text(json.dumps(custom_payload), encoding="utf-8")
+    monkeypatch.setattr(stocks_module, "STOCKS_FILE", custom_path)
+
+    result = server.list_stocks()
+    assert result == [
+        {"ticker": "tMSFT", "name": "Test Microsoft", "reference_value": 415.5},
+        {"ticker": "tGOOG", "name": "Test Alphabet", "reference_value": 180.25},
+    ]
+
+
+def test_list_stocks_empty_dataset_returns_empty_list(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    empty_path = tmp_path / "empty_stocks.json"
+    empty_path.write_text("[]", encoding="utf-8")
+    monkeypatch.setattr(stocks_module, "STOCKS_FILE", empty_path)
+
+    assert load_stocks() == []
+    assert server.list_stocks() == []
+
+
 def test_fastmcp_tool_discovery_and_invocation() -> None:
     tools = _run_sync_coroutine(server.mcp.list_tools())
-    tool_names = {tool.name for tool in tools}
+    tool_by_name = {tool.name: tool for tool in tools}
+    tool_names = set(tool_by_name.keys())
     assert "hello_kyrox" in tool_names
     assert "get_stock_info" in tool_names
+    assert "list_stocks" in tool_names
+
+    list_stocks_tool = tool_by_name["list_stocks"]
+    assert not list_stocks_tool.inputSchema.get("required")
+
+    # Test 0: list_stocks via FastMCP
+    content_list, structured_list = _run_sync_coroutine(
+        server.mcp.call_tool("list_stocks", {})
+    )
+    expected_list = [
+        {"ticker": "tAAPL", "name": "Test Apple", "reference_value": 230.0},
+        {"ticker": "tTSLA", "name": "Test Tesla", "reference_value": 250.0},
+        {"ticker": "tNVDA", "name": "Test Nvidia", "reference_value": 140.0},
+    ]
+    assert structured_list == {"result": expected_list}
+    assert [json.loads(block.text) for block in content_list] == expected_list
 
     # Test 1: tAAPL
     content_aapl, structured_aapl = _run_sync_coroutine(
@@ -259,9 +335,12 @@ def test_load_stocks_missing_file_raises_file_not_found(
     with pytest.raises(FileNotFoundError, match="Stock data file not found"):
         load_stocks()
 
-    # Ensure server.get_stock_info does not silently swallow FileNotFoundError into "not found"
+    # Ensure server.get_stock_info and server.list_stocks do not silently swallow FileNotFoundError
     with pytest.raises(FileNotFoundError, match="Stock data file not found"):
         server.get_stock_info("tAAPL")
+
+    with pytest.raises(FileNotFoundError, match="Stock data file not found"):
+        server.list_stocks()
 
 
 def test_load_stocks_malformed_json_raises_value_error(
@@ -276,6 +355,9 @@ def test_load_stocks_malformed_json_raises_value_error(
 
     with pytest.raises(ValueError, match="Invalid JSON in stock data file"):
         server.get_stock_info("tAAPL")
+
+    with pytest.raises(ValueError, match="Invalid JSON in stock data file"):
+        server.list_stocks()
 
 
 @pytest.mark.parametrize(
@@ -331,4 +413,172 @@ def test_load_stocks_invalid_structure_raises_value_error(
 
     with pytest.raises(ValueError, match=expected_message):
         load_stocks()
+
+    with pytest.raises(ValueError, match=expected_message):
+        server.list_stocks()
+
+
+# ---------------------------------------------------------------------------
+# D. Extended Day 7 Stock Validation & Cache Invalidation Tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "duplicate_tickers",
+    [
+        ("tAAPL", "tAAPL"),
+        ("tAAPL", "taapl"),
+        ("tTSLA", "  ttsla  "),
+    ],
+)
+def test_load_stocks_duplicate_tickers_rejected_case_insensitively(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    duplicate_tickers: tuple[str, str],
+) -> None:
+    dup_path = tmp_path / "duplicate_stocks.json"
+    first_ticker, second_ticker = duplicate_tickers
+    payload = [
+        {
+            "ticker": first_ticker,
+            "stock": "Test First",
+            "reference_value": 100.0,
+            "token_address": "",
+        },
+        {
+            "ticker": second_ticker,
+            "stock": "Test Second",
+            "reference_value": 200.0,
+            "token_address": "",
+        },
+    ]
+    dup_path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(stocks_module, "STOCKS_FILE", dup_path)
+
+    with pytest.raises(ValueError, match="duplicate stock ticker") as exc_info:
+        load_stocks()
+    assert getattr(exc_info.value, "code", None) == "DUPLICATE_TICKER"
+
+
+@pytest.mark.parametrize(
+    ("bad_value", "expected_match"),
+    [
+        (0, "must be a positive number"),
+        (0.0, "must be a positive number"),
+        (-150.5, "must be a positive number"),
+        ("230.0", "must be a number"),
+        (False, "must be a number"),
+        (None, "must be a number"),
+    ],
+)
+def test_load_stocks_rejects_non_positive_and_non_numeric_reference_values(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    bad_value: Any,
+    expected_match: str,
+) -> None:
+    bad_path = tmp_path / "bad_numeric_stocks.json"
+    payload = [
+        {
+            "ticker": "tAAPL",
+            "stock": "Test Apple",
+            "reference_value": bad_value,
+            "token_address": "",
+        }
+    ]
+    bad_path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(stocks_module, "STOCKS_FILE", bad_path)
+
+    with pytest.raises(ValueError, match=expected_match):
+        load_stocks()
+
+
+@pytest.mark.parametrize("non_finite_literal", ["NaN", "Infinity", "-Infinity"])
+def test_load_stocks_rejects_nan_and_infinity_in_json(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    non_finite_literal: str,
+) -> None:
+    nan_path = tmp_path / "nan_stocks.json"
+    raw_json = (
+        '[{"ticker": "tAAPL", "stock": "Test Apple", '
+        f'"reference_value": {non_finite_literal}, "token_address": ""}}]'
+    )
+    nan_path.write_text(raw_json, encoding="utf-8")
+    monkeypatch.setattr(stocks_module, "STOCKS_FILE", nan_path)
+
+    with pytest.raises(ValueError, match="must be a finite number"):
+        load_stocks()
+
+
+def test_load_stocks_rejects_blank_stock_name(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bad_name_path = tmp_path / "bad_name.json"
+    payload = [
+        {
+            "ticker": "tAAPL",
+            "stock": "   ",
+            "reference_value": 230.0,
+            "token_address": "",
+        }
+    ]
+    bad_name_path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(stocks_module, "STOCKS_FILE", bad_name_path)
+
+    with pytest.raises(ValueError, match="'stock' must be a non-empty string"):
+        load_stocks()
+
+
+def test_stocks_cache_hits_and_auto_invalidates_on_file_update(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache_file = tmp_path / "cached_stocks.json"
+    initial_payload = [
+        {
+            "ticker": "tAAPL",
+            "stock": "Test Apple",
+            "reference_value": 230.0,
+            "token_address": "",
+        }
+    ]
+    cache_file.write_text(json.dumps(initial_payload), encoding="utf-8")
+    monkeypatch.setattr(stocks_module, "STOCKS_FILE", cache_file)
+    stocks_module.invalidate_stocks_cache()
+
+    before_stats = stocks_module.get_stocks_cache_stats()
+    first_read = load_stocks()
+    after_miss_stats = stocks_module.get_stocks_cache_stats()
+    assert after_miss_stats["misses"] == before_stats["misses"] + 1
+
+    # Mutating returned record must not corrupt cached dataset
+    first_read[0]["reference_value"] = 999999.0
+
+    second_read = load_stocks()
+    after_hit_stats = stocks_module.get_stocks_cache_stats()
+    assert after_hit_stats["hits"] == after_miss_stats["hits"] + 1
+    assert second_read[0]["reference_value"] == 230.0
+
+    # Updating file content on disk must automatically invalidate cache
+    updated_payload = [
+        {
+            "ticker": "tAAPL",
+            "stock": "Test Apple",
+            "reference_value": 245.0,
+            "token_address": "",
+        }
+    ]
+    cache_file.write_text(json.dumps(updated_payload), encoding="utf-8")
+    third_read = load_stocks()
+    assert third_read[0]["reference_value"] == 245.0
+
+    # Explicit cache invalidation forces a fresh miss on next read
+    stocks_module.invalidate_stocks_cache()
+    post_invalidate_stats = stocks_module.get_stocks_cache_stats()
+    load_stocks()
+    final_stats = stocks_module.get_stocks_cache_stats()
+    assert final_stats["misses"] == post_invalidate_stats["misses"] + 1
+
 
