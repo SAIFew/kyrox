@@ -1,6 +1,6 @@
 # KYROX (`kyrox-mcp`)
 
-**Status:** `v0.1` Pre-Release Scaffold (`VERIFIED`: Python 3.13 environment & smoke test suite; `PLANNED`: `FastMCP` server entrypoint & six MCP tools)
+**Status:** `v0.1` Active Development (`VERIFIED`: Python 3.13 environment, `FastMCP` server, `hello_kyrox`, `get_stock_info`, `list_stocks`, centralized error handling & redacted JSONL audit logging; `IN PROGRESS`: `get_wallet_balances` & Base Sepolia mock ERC-20 deployment; `PLANNED`: portfolio, unsigned transaction prep, simulation & policy gates)
 **Target Network:** Base Sepolia Testnet (`chainId: 84532`) · Labelled Mock Token Fixtures (`mock`)
 **Runtime Stack:** Python 3.11+ (3.13 x64 baseline) · MCP Python SDK v1 (`FastMCP`, `mcp[cli]>=1.28,<2`) · `web3.py` (`web3>=8.0,<9`)
 **License:** Apache-2.0
@@ -42,14 +42,15 @@ AI Host / MCP Client (MCP Inspector / Claude Desktop)
         |
         | MCP stdio transport (JSON-RPC on stdout; diagnostics on stderr)
         v
-KYROX Python MCP Server (FastMCP)  [PLANNED]
+KYROX Python MCP Server (FastMCP)  [VERIFIED]
         |
-        +--> Stock Data Adapter ------> Labelled mock fixtures (data/stocks.json) / verified testnet source
-        +--> Wallet Reader -----------> Base Sepolia RPC (ERC-20 read calls, chainId 84532)
-        +--> Portfolio Calculator ----> Token balances + qualified reference values (Decimal / base units)
-        +--> Transaction Builder -----> Unsigned transaction payload only (signed: false)
-        +--> Simulator ---------------> eth_call + gas estimate + policy checks on exact intent
-        +--> Policy & Audit Logger ---> Allowlist, per-tx bounds, redacted JSONL call logs
+        +--> Stock Data Adapter ------> Labelled mock fixtures (data/stocks.json)  [VERIFIED]
+        +--> Wallet Reader -----------> Base Sepolia RPC (ERC-20 read calls, chainId 84532)  [IN PROGRESS]
+        +--> Portfolio Calculator ----> Token balances + qualified reference values (Decimal / base units)  [PLANNED]
+        +--> Transaction Builder -----> Unsigned transaction payload only (signed: false)  [PLANNED]
+        +--> Simulator ---------------> eth_call + gas estimate + policy checks on exact intent  [PLANNED]
+        +--> Audit Logger & Errors ---> Redacted JSONL call logs & error classification  [VERIFIED]
+        +--> Transaction Policy Gate -> Allowlist & per-tx bounds  [PLANNED]
 
 Human reviews and signs outside KYROX in their own external wallet.
 KYROX v0.1 never receives private keys, never signs, and never broadcasts.
@@ -57,9 +58,9 @@ KYROX v0.1 never receives private keys, never signs, and never broadcasts.
 
 ---
 
-## 5. Current Implementation Status (`VERIFIED` vs. `PLANNED`)
+## 5. Current Implementation Status (`VERIFIED`, `IN PROGRESS`, `PLANNED`)
 
-KYROX follows a strict evidence-first policy: **no feature or tool is marked implemented until its code and automated tests exist in this repository.**
+KYROX follows a strict evidence-first policy: **every component is labelled by its actual implementation and verification state in this repository.**
 
 | Component | Status | Notes |
 |---|---|---|
@@ -67,26 +68,29 @@ KYROX follows a strict evidence-first policy: **no feature or tool is marked imp
 | Environment & security hygiene smoke tests | `VERIFIED` | [tests/test_environment_smoke.py](tests/test_environment_smoke.py) (`4 passed` via `pytest`). |
 | Public configuration template & ignore rules | `VERIFIED` | [.env.example](.env.example) (placeholders only) and [.gitignore](.gitignore). |
 | Package directory scaffolds (`tools/`, `tests/`, `data/`) | `VERIFIED` | [tools/__init__.py](tools/__init__.py), [tests/__init__.py](tests/__init__.py), [data/.gitkeep](data/.gitkeep). |
-| FastMCP server entrypoint (`server.py`) & `hello_kyrox` tool | `PLANNED` | Initial MCP Inspector connectivity smoke tool. |
-| Six domain MCP tools (`tools/stocks.py`, `wallet.py`, `tx.py`, `log.py`) | `PLANNED` | Specified below; not yet implemented in this commit. |
-| Server-side policy engine (`policy.py`) & mock fixtures (`data/stocks.json`) | `PLANNED` | Allowlist, numeric bounds, and labelled mock token fixtures. |
+| FastMCP server entrypoint (`server.py`) & `hello_kyrox` tool | `VERIFIED` | [server.py](server.py) (`FastMCP("KYROX")` over `stdio`). |
+| Stock catalogue tools (`get_stock_info`, `list_stocks`) | `VERIFIED` | [tools/stocks.py](tools/stocks.py), [data/stocks.json](data/stocks.json), and [tests/test_stocks.py](tests/test_stocks.py) (`37 passed` via `pytest`, including schema, finite-number, duplicate-ticker, and cache invalidation checks). |
+| Mock ERC-20 stock contract (`contracts/MockStock.sol`) | `IMPLEMENTED` | [contracts/MockStock.sol](contracts/MockStock.sol) (OpenZeppelin ERC-20, 18 decimals, mints `1,000` tokens to deployer). |
+| Base Sepolia wallet balance reader (`get_wallet_balances`) | `IN PROGRESS` | [tools/wallet.py](tools/wallet.py) and [tests/test_wallet.py](tests/test_wallet.py) (`49 passed` unit/MCP tests including zero-address, EIP-55 checksum, RPC config/timeout, and contract call checks; awaiting live Base Sepolia `tAAPL`, `tTSLA`, `tNVDA` contract addresses in `data/stocks.json` for on-chain verification). |
+| Structured JSONL audit logging & centralized error handling (`tools/log.py`, `tools/errors.py`) | `VERIFIED` | [tools/log.py](tools/log.py), [tools/errors.py](tools/errors.py), and [tests/test_logging_and_errors.py](tests/test_logging_and_errors.py) (`14 passed` covering UTC JSONL audit logs, recursive secret redaction, size-based log rotation, concurrency, and retryable vs. non-retryable error classification). |
+| Portfolio, unsigned transaction builder, simulator & policy engine | `PLANNED` | Specified below for upcoming `v0.1` milestones. |
 
 ---
 
-## 6. The Six Planned MCP Tools (`v0.1` Scope)
+## 6. The Six MCP Tools (`v0.1` Scope)
 
-All `v0.1` demonstrations operate exclusively on **Base Sepolia testnet (`chainId: 84532`)** and clearly labelled **mock ERC-20 stock tokens**. None of the six tools below are implemented yet; all six are `PLANNED` for `v0.1`:
+All `v0.1` demonstrations operate exclusively on **Base Sepolia testnet (`chainId: 84532`)** and clearly labelled **mock ERC-20 stock tokens**:
 
-| Tool | Category | Status | Planned Behavior |
+| Tool | Category | Status | Behavior |
 |---|---|---|---|
-| `get_stock_info(ticker)` | Read-only | `PLANNED` | Return tokenized-stock name, contract address, chain ID, data source, observation timestamp, and reference caveats. |
-| `list_stocks()` | Read-only | `PLANNED` | List supported tokenized-stock entries and explicitly distinguish `mock` fixtures from live testnet data. |
-| `get_wallet_balances(wallet)` | Read-only | `PLANNED` | Read ERC-20 token balances for a checksummed EVM address on Base Sepolia (`chainId: 84532`). |
+| `get_stock_info(ticker)` | Read-only | `VERIFIED` | Return mock tokenized-stock record (`ticker`, `stock`, `reference_value`, `token_address`) for a case-insensitive ticker lookup. |
+| `list_stocks()` | Read-only | `VERIFIED` | Return all configured stock summaries (`ticker`, `name`, `reference_value`) from `data/stocks.json` in source order. |
+| `get_wallet_balances(wallet)` | Read-only | `IN PROGRESS` | Validate a public EVM address, verify Base Sepolia (`chainId: 84532`), read `balanceOf(wallet)` and `decimals()` on configured ERC-20 contracts, and return non-zero human-readable balances. Code & 36 unit tests complete; awaiting live testnet contract deployment verification. |
 | `get_portfolio(wallet)` | Read-only | `PLANNED` | Combine token balances with explicitly qualified reference values using integer base units and `Decimal`. |
 | `prepare_transaction(...)` | Unsigned Intent | `PLANNED` | Build an **unsigned** transaction dictionary (`signed: false`) bound to chain ID, sender, allowlisted token contract, recipient, amount, and calldata. |
 | `simulate_transaction(...)` | Dry-Run & Policy | `PLANNED` | Validate policy rules and run `eth_call` / gas estimation against the exact prepared transaction intent, reporting simulation caveats. |
 
-*(A minimal `hello_kyrox` connectivity tool is also `PLANNED` for initial MCP Inspector verification.)*
+*(A `hello_kyrox(name)` connectivity tool is also `VERIFIED` in `server.py`.)*
 
 ---
 

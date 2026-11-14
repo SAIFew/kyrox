@@ -1,0 +1,55 @@
+from pathlib import Path
+import subprocess
+import time
+from PIL import Image
+
+ROOT = Path(__file__).resolve().parent
+OUT = ROOT / "slides"
+OUT.mkdir(exist_ok=True)
+
+slides = [
+'''<div class="eyebrow"><span class="eyebrow-dot"></span> DAY 05 / AGENT DATA ACCESS</div>
+<div class="hero-grid"><div class="hero-copy"><p class="kicker">THE NEXT INTERFACE FOR FINANCIAL DATA</p><h1>What if AI agents could retrieve <span class="green">stock market data</span> on their own?</h1><p class="lede">A question about access. A tool call is one practical starting point.</p></div><div class="hero-visual"><div class="orbit orbit-a"></div><div class="orbit orbit-b"></div><div class="agent-chip"><span class="tiny-k">K</span><span>AI AGENT</span><i class="pulse"></i></div><div class="route-line"></div><div class="data-chip"><span class="chip-over">MCP TOOL</span><strong>list_stocks</strong><span class="chip-sub">structured response</span></div><div class="record-card"><div class="record-top"><span class="status"><i></i> LOCAL FIXTURE</span><span>01 / 03</span></div><div class="record-ticker">tAAPL</div><div class="record-name">Test Apple</div><div class="record-value"><span>reference_value</span><b>230.0</b></div><div class="record-rule"></div><small>DEMO DATA · NOT A LIVE QUOTE</small></div><div class="visual-cross">+</div></div></div>
+<div class="bottom-note"><span>TOOLS MAKE DATA REACHABLE</span><span class="bottom-line"></span><span>01 — 05</span></div>''',
+'''<div class="eyebrow"><span class="eyebrow-dot"></span> WHY STRUCTURE MATTERS</div>
+<div class="split-heading"><div><p class="kicker">FROM QUESTION TO USABLE INPUT</p><h2>Agents need a reliable way to <span class="green">read beyond the chat.</span></h2></div><p class="lede side-lede">External data becomes useful when the agent can request it and receive fields it can work with.</p></div>
+<div class="compare"><div class="compare-panel loose"><div class="panel-head"><span class="panel-index">01</span><span>WITHOUT A DATA TOOL</span><span class="panel-state">UNCONNECTED</span></div><div class="loose-copy"><span class="quote-mark">“</span><p>Can you check the latest stocks for me?</p><div class="dotted-rule"></div><span class="ghost-label">No source attached to this request</span></div></div><div class="bridge-arrow"><span>→</span><small>TOOL<br/>ACCESS</small></div><div class="compare-panel structured"><div class="panel-head"><span class="panel-index">02</span><span>WITH A STRUCTURED TOOL</span><span class="panel-state green-text">MACHINE-READABLE</span></div><div class="json-mini"><div class="json-meta"><span><i></i> list_stocks()</span><span>JSON</span></div><pre><span class="punct">[</span>
+  <span class="punct">{</span>
+    <span class="key">"ticker"</span>: <span class="str">"tAAPL"</span>,
+    <span class="key">"name"</span>: <span class="str">"Test Apple"</span>,
+    <span class="key">"reference_value"</span>: <span class="num">230.0</span>
+  <span class="punct">}</span>
+<span class="punct">]</span></pre></div></div></div>
+<div class="principles"><div><span class="principle-no">01</span><b>Request</b><span>Call an available tool</span></div><div><span class="principle-no">02</span><b>Receive</b><span>Get predictable fields</span></div><div><span class="principle-no">03</span><b>Use</b><span>Reason over returned data</span></div></div>
+<div class="bottom-note"><span>STRUCTURE GIVES THE AGENT SOMETHING IT CAN PARSE</span><span class="bottom-line"></span><span>02 — 05</span></div>''',
+'''<div class="eyebrow"><span class="eyebrow-dot"></span> MEET KYROX</div>
+<div class="split-heading intro-heading"><div><p class="kicker">A SMALL, EXPLICIT BRIDGE</p><h2>KYROX is an <span class="green">MCP server</span> for structured stock records.</h2></div><p class="lede side-lede">It exposes Python functions as tools an MCP client can discover and call. Today, those tools read local demo fixtures.</p></div>
+<div class="architecture"><div class="arch-node client-node"><div class="node-icon agent-icon"><span>AI</span><i></i><i></i></div><div class="node-over">MCP CLIENT</div><strong>AI agent</strong><small>requests a tool</small></div><div class="arch-connector"><div class="connector-label">MCP / STDIO</div><span class="connector-line"></span><span class="connector-arrow">›</span></div><div class="arch-node server-node"><div class="server-emblem"><span>K</span><i></i></div><div class="node-over">FASTmcp SERVER</div><strong>KYROX</strong><small>registers tool functions</small></div><div class="arch-connector"><div class="connector-label">LOCAL LOOKUP</div><span class="connector-line"></span><span class="connector-arrow">›</span></div><div class="arch-node data-node"><div class="file-icon"><span>{ }</span><i></i><i></i></div><div class="node-over">SOURCE TODAY</div><strong>stocks.json</strong><small>3 test records</small></div></div>
+<div class="tool-strip"><span class="tool-strip-label">EXPOSED TOOLS</span><div class="tool-pill"><i></i><b>list_stocks</b><span>list summaries</span></div><div class="tool-pill"><i></i><b>get_stock_info</b><span>look up one ticker</span></div><div class="tool-note">Values are local fixtures, not live quotes.</div></div>
+<div class="bottom-note"><span>AI CLIENT → MCP → LOCAL DATA</span><span class="bottom-line"></span><span>03 — 05</span></div>''',
+'''<div class="eyebrow"><span class="eyebrow-dot"></span> ONE REAL CALL PATH</div>
+<div class="split-heading architecture-heading"><div><p class="kicker">WHAT HAPPENS UNDER THE HOOD</p><h2>One tool call.<br/><span class="green">A structured result.</span></h2></div><p class="lede side-lede">The server reads and validates the local JSON list, then returns stock summaries in source order.</p></div>
+<div class="call-flow"><div class="flow-label">REQUEST PATH <span>01 → 04</span></div><div class="flow-row"><div class="flow-node"><span class="flow-num">01</span><span class="flow-icon agent-flow">AI</span><b>AI Agent</b><small>asks for stock records</small></div><span class="flow-arrow">→</span><div class="flow-node kyrox-flow"><span class="flow-num">02</span><span class="flow-icon k-flow">K</span><b>KYROX MCP Server</b><small>FastMCP · Python · stdio</small></div><span class="flow-arrow">→</span><div class="flow-node active-flow"><span class="flow-num">03</span><span class="flow-icon tool-flow">ƒ</span><b>list_stocks</b><small>no arguments required</small></div><span class="flow-arrow">→</span><div class="flow-node"><span class="flow-num">04</span><span class="flow-icon data-flow">{ }</span><b>Stock Records</b><small>local stocks.json</small></div></div><div class="flow-rail"><span class="rail-start"></span><span class="rail-end"></span></div></div>
+<div class="response-window"><div class="response-title"><div class="window-dots"><i></i><i></i><i></i></div><span>TOOL RESPONSE / list_stocks</span><span class="response-format">ARRAY · 3 ITEMS</span></div><div class="records-table"><div class="table-head"><span>TICKER</span><span>NAME</span><span>REFERENCE_VALUE</span><span>DATA NOTE</span></div><div class="table-row"><b>tAAPL</b><span>Test Apple</span><strong>230.0</strong><em>local fixture</em></div><div class="table-row"><b>tTSLA</b><span>Test Tesla</span><strong>250.0</strong><em>local fixture</em></div><div class="table-row"><b>tNVDA</b><span>Test Nvidia</span><strong>140.0</strong><em>local fixture</em></div></div></div>
+<div class="bottom-note"><span>GET_STOCK_INFO LOOKS UP ONE TICKER</span><span class="bottom-line"></span><span>04 — 05</span></div>''',
+'''<div class="eyebrow"><span class="eyebrow-dot"></span> WHAT COMES NEXT</div>
+<div class="split-heading future-heading"><div><p class="kicker">A DIRECTION, NOT A CLAIM</p><h2>From local demo data<br/>toward <span class="green">external sources.</span></h2></div><p class="lede side-lede">The current implementation is deliberately small. A future adapter could connect a financial-data provider while keeping the tool boundary explicit.</p></div>
+<div class="roadmap"><div class="roadmap-track"><span class="track-solid"></span><span class="track-dashed"></span><span class="track-dot dot-one"></span><span class="track-dot dot-two"></span></div><div class="roadmap-stages"><div class="stage current-stage"><div class="stage-top"><span>NOW</span><i class="stage-check">✓</i></div><div class="stage-title">Local fixtures</div><p>Three test records in <code>stocks.json</code>. Static reference values. No provider connected.</p><div class="stage-tag"><i></i> IMPLEMENTED</div></div><div class="stage future-stage"><div class="stage-top"><span>FUTURE DIRECTION</span><i class="stage-plus">+</i></div><div class="stage-title">External data adapters</div><p>Explore provider connections, provenance and freshness metadata before returning data to a tool.</p><div class="stage-tag"><i></i> NOT IMPLEMENTED</div></div></div></div>
+<div class="future-callout"><div class="callout-mark">↗</div><div><b>Same clear boundary.</b><span>Agent asks · KYROX validates · source returns structured records</span></div><span class="callout-status">ROADMAP CONCEPT</span></div>
+<div class="bottom-note"><span>BUILDING TOWARD GROUNDED DATA ACCESS</span><span class="bottom-line"></span><span>05 — 05</span></div>'''
+]
+
+for index, markup in enumerate(slides, 1):
+    title = f"KYROX — Day 5 Carousel — {index:02}"
+    html = f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=1080, initial-scale=1"><title>{title}</title><link rel="stylesheet" href="../styles.css"></head><body><main class="slide slide-{index}"><div class="texture"></div><header class="masthead"><div class="brand"><span class="brand-mark">K</span><span class="brand-name">KYROX</span><span class="brand-divider"></span><span class="brand-series">AGENT DATA / 01</span></div><div class="series-right">FIELD NOTES <span>·</span> MCP</div></header><section class="content">{markup}</section><footer class="footer"><span>KYROX / ENGINEERING SERIES</span><span class="footer-center">LOCAL DEMO DATA · NOT LIVE MARKET DATA</span><span>DAY 05 &nbsp; <b>↗</b></span></footer></main></body></html>'''
+    (OUT / f"slide-{index:02}.html").write_text(html, encoding="utf-8")
+
+import re
+
+pages = [
+    re.search(r'<main class="slide slide-\d+">.*?</main>', (OUT / f"slide-{i:02}.html").read_text(encoding="utf-8"), re.S).group(0)
+    for i in range(1, 6)
+]
+print_doc = '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>KYROX Day 5 — Print Export</title><link rel="stylesheet" href="styles.css"><style>@page{size:1080px 1350px;margin:0}</style></head><body>' + "".join(pages) + "</body></html>"
+(ROOT / "print.html").write_text(print_doc, encoding="utf-8")
+print("Built five standalone HTML slides and print.html. In Edge, choose Print > Save as PDF, then run render_from_pdf.py <pdf-file>.")

@@ -30,3 +30,22 @@ keystore/
 secrets/
 mnemonic*
 private_key*
+
+# Video and media production outputs & caches (keep local, exclude from Git)
+node_modules/
+content/**/build/
+content/**/renders/
+content/**/exports/
+content/**/final/*.png
+content/**/slides/*.png
+content/**/preview.png
+content/day-6-architecture/*.png
+
+# Video and audio media deliverables
+*.mp4
+*.mov
+*.webm
+*.m4v
+*.avi
+*.wav
+*.mp3
