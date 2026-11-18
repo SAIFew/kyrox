@@ -1,6 +1,6 @@
 # KYROX (`kyrox-mcp`)
 
-**Status:** `v0.1` Active Development (`VERIFIED`: Python 3.13 environment, `FastMCP` server, `hello_kyrox`, `get_stock_info`, `list_stocks`, centralized error handling & redacted JSONL audit logging; `IN PROGRESS`: `get_wallet_balances` & Base Sepolia mock ERC-20 deployment; `PLANNED`: portfolio, unsigned transaction prep, simulation & policy gates)
+**Status:** `v0.1` Active Development (`VERIFIED`: Python 3.13 environment, `FastMCP` server, `hello_kyrox`, `get_stock_info`, `list_stocks`, centralized error handling, redacted JSONL audit logging & STDIO protocol framing; `IN PROGRESS`: `get_wallet_balances`, `get_portfolio`, `prepare_transaction` & `simulate_transaction` — code & `308` offline/MCP/mock-provider tests verified, awaiting live Base Sepolia `MockStock.sol` deployment; `PLANNED`: standalone policy module)
 **Target Network:** Base Sepolia Testnet (`chainId: 84532`) · Labelled Mock Token Fixtures (`mock`)
 **Runtime Stack:** Python 3.11+ (3.13 x64 baseline) · MCP Python SDK v1 (`FastMCP`, `mcp[cli]>=1.28,<2`) · `web3.py` (`web3>=8.0,<9`)
 **License:** Apache-2.0
@@ -44,11 +44,11 @@ AI Host / MCP Client (MCP Inspector / Claude Desktop)
         v
 KYROX Python MCP Server (FastMCP)  [VERIFIED]
         |
-        +--> Stock Data Adapter ------> Labelled mock fixtures (data/stocks.json)  [VERIFIED]
+        +--> Stock Data Adapter ------> Labelled mock fixtures (data/stocks.json / KYROX_STOCKS_FILE)  [VERIFIED]
         +--> Wallet Reader -----------> Base Sepolia RPC (ERC-20 read calls, chainId 84532)  [IN PROGRESS]
-        +--> Portfolio Calculator ----> Token balances + qualified reference values (Decimal / base units)  [PLANNED]
-        +--> Transaction Builder -----> Unsigned transaction payload only (signed: false)  [PLANNED]
-        +--> Simulator ---------------> eth_call + gas estimate + policy checks on exact intent  [PLANNED]
+        +--> Portfolio Calculator ----> Token balances + qualified reference values (100-digit Decimal)  [IN PROGRESS]
+        +--> Transaction Builder -----> Unsigned transaction payload only (signed: false)  [IN PROGRESS]
+        +--> Simulator ---------------> eth_call + gas estimate + policy checks on exact intent  [IN PROGRESS]
         +--> Audit Logger & Errors ---> Redacted JSONL call logs & error classification  [VERIFIED]
         +--> Transaction Policy Gate -> Allowlist & per-tx bounds  [PLANNED]
 
@@ -71,9 +71,10 @@ KYROX follows a strict evidence-first policy: **every component is labelled by i
 | FastMCP server entrypoint (`server.py`) & `hello_kyrox` tool | `VERIFIED` | [server.py](server.py) (`FastMCP("KYROX")` over `stdio`). |
 | Stock catalogue tools (`get_stock_info`, `list_stocks`) | `VERIFIED` | [tools/stocks.py](tools/stocks.py), [data/stocks.json](data/stocks.json), and [tests/test_stocks.py](tests/test_stocks.py) (`37 passed` via `pytest`, including schema, finite-number, duplicate-ticker, and cache invalidation checks). |
 | Mock ERC-20 stock contract (`contracts/MockStock.sol`) | `IMPLEMENTED` | [contracts/MockStock.sol](contracts/MockStock.sol) (OpenZeppelin ERC-20, 18 decimals, mints `1,000` tokens to deployer). |
-| Base Sepolia wallet balance reader (`get_wallet_balances`) | `IN PROGRESS` | [tools/wallet.py](tools/wallet.py) and [tests/test_wallet.py](tests/test_wallet.py) (`49 passed` unit/MCP tests including zero-address, EIP-55 checksum, RPC config/timeout, and contract call checks; awaiting live Base Sepolia `tAAPL`, `tTSLA`, `tNVDA` contract addresses in `data/stocks.json` for on-chain verification). |
+| Base Sepolia wallet balance & portfolio reader (`get_wallet_balances`, `get_portfolio`) | `IN PROGRESS` | [tools/wallet.py](tools/wallet.py), [tests/test_wallet.py](tests/test_wallet.py), [tests/test_portfolio.py](tests/test_portfolio.py), and [tests/test_stdio.py](tests/test_stdio.py) (`107 passed` wallet/portfolio/STDIO tests covering zero-address, EIP-55 checksum, `uint256` bounds, contract vs. dataset decimal consistency, 100-digit `Decimal` valuation, currency-mismatch protection, and explicit `unpriced_holdings`; packaged `data/stocks.json` remains unchanged with blank `token_address` fields while live Base Sepolia `tAAPL`, `tTSLA`, `tNVDA` addresses are loaded locally via `KYROX_STOCKS_FILE`). |
 | Structured JSONL audit logging & centralized error handling (`tools/log.py`, `tools/errors.py`) | `VERIFIED` | [tools/log.py](tools/log.py), [tools/errors.py](tools/errors.py), and [tests/test_logging_and_errors.py](tests/test_logging_and_errors.py) (`14 passed` covering UTC JSONL audit logs, recursive secret redaction, size-based log rotation, concurrency, and retryable vs. non-retryable error classification). |
-| Portfolio, unsigned transaction builder, simulator & policy engine | `PLANNED` | Specified below for upcoming `v0.1` milestones. |
+| Unsigned ERC-20 transaction builder & EVM simulator (`prepare_transaction`, `simulate_transaction`, `tools/tx.py`) | `IN PROGRESS` | [tools/tx.py](tools/tx.py) and [tests/test_tx.py](tests/test_tx.py) (`146 passed` unit, security, serialization, simulation, and FastMCP tests using deterministic mock-provider and transport-level JSON-RPC fixtures; builds unsigned `transfer(to, amount_base_units)` intents with `signed: false`, SHA-256 `intent_hash`, expiration window, policy checks, and dry-runs execution via `eth_call` + `eth_estimateGas` pinned to a single canonical Base Sepolia block snapshot; awaiting live Base Sepolia `MockStock.sol` deployment). |
+| Standalone transaction policy module | `PLANNED` | Specified for upcoming `v0.1` milestones (per-tx bounds, ticker/recipient allowlists, and self-transfer guards are already enforced in `tools/tx.py`). |
 
 ---
 
@@ -85,12 +86,36 @@ All `v0.1` demonstrations operate exclusively on **Base Sepolia testnet (`chainI
 |---|---|---|---|
 | `get_stock_info(ticker)` | Read-only | `VERIFIED` | Return mock tokenized-stock record (`ticker`, `stock`, `reference_value`, `token_address`) for a case-insensitive ticker lookup. |
 | `list_stocks()` | Read-only | `VERIFIED` | Return all configured stock summaries (`ticker`, `name`, `reference_value`) from `data/stocks.json` in source order. |
-| `get_wallet_balances(wallet)` | Read-only | `IN PROGRESS` | Validate a public EVM address, verify Base Sepolia (`chainId: 84532`), read `balanceOf(wallet)` and `decimals()` on configured ERC-20 contracts, and return non-zero human-readable balances. Code & 36 unit tests complete; awaiting live testnet contract deployment verification. |
-| `get_portfolio(wallet)` | Read-only | `PLANNED` | Combine token balances with explicitly qualified reference values using integer base units and `Decimal`. |
-| `prepare_transaction(...)` | Unsigned Intent | `PLANNED` | Build an **unsigned** transaction dictionary (`signed: false`) bound to chain ID, sender, allowlisted token contract, recipient, amount, and calldata. |
-| `simulate_transaction(...)` | Dry-Run & Policy | `PLANNED` | Validate policy rules and run `eth_call` / gas estimation against the exact prepared transaction intent, reporting simulation caveats. |
+| `get_wallet_balances(wallet)` | Read-only | `IN PROGRESS` | Validate a public EVM address, verify Base Sepolia (`chainId: 84532`), read `balanceOf(wallet)` and `decimals()` on configured ERC-20 contracts, and return non-zero human-readable balances. Code & 49 unit tests complete; awaiting live testnet contract deployment verification. |
+| `get_portfolio(wallet)` | Read-only | `IN PROGRESS` | Combine Base Sepolia ERC-20 token balances with qualified reference values using 100-digit `Decimal` arithmetic, enforce single-currency aggregation, flag `unpriced_holdings`, and return structured `holdings`, `total_value`, and explicit `warnings`. Code & 56 unit/MCP tests complete; awaiting live testnet contract deployment verification. |
+| `prepare_transaction(from_wallet, ticker, to, amount)` | Unsigned Intent | `IN PROGRESS` | Validate sender/recipient addresses, Base Sepolia (`chainId: 84532`), configured token contract, and contract `decimals()`; convert human token amount to exact integer base units via `Decimal`; enforce policy bounds; and return an **unsigned** ERC-20 `transfer(to, amount_base_units)` intent (`signed: false`, `intent_hash`, `expires_at`, `unsigned_tx`). Code & mock-provider/MCP tests complete; awaiting live testnet contract deployment verification. |
+| `simulate_transaction(from_wallet, ticker, to, amount)` | Dry-Run & Policy | `IN PROGRESS` | Reuse `prepare_transaction` and policy checks, verify the unsigned transaction intent (`intent_hash`, `expires_at`, `chainId: 84532`), capture a single canonical block number (`eth_blockNumber`), execute `eth_call` (decoding the ERC-20 `bool` return value) and `eth_estimateGas` (in gas units) against that pinned block snapshot using an allowlisted EIP-1474 call object, and report `would_succeed`, `estimated_gas`, `block_number`, or sanitized revert/error classifications (`signed: false`, `broadcast: false`). Code & 146 `test_tx.py` tests complete; awaiting live testnet contract deployment verification. |
 
 *(A `hello_kyrox(name)` connectivity tool is also `VERIFIED` in `server.py`.)*
+
+### How `prepare_transaction` Works (`tools/tx.py`)
+
+- **Input Parameters:**
+  - `from_wallet` (`str`): Public EIP-55 checksummed or hex sender wallet address on Base Sepolia.
+  - `ticker` (`str`): Approved tokenized-stock ticker symbol from the configured stock catalogue (e.g., `tAAPL`, `tTSLA`, `tNVDA`).
+  - `to` (`str`): Public EIP-55 checksummed or hex recipient wallet address on Base Sepolia.
+  - `amount` (`int | float | str`): Positive finite token quantity to transfer.
+- **Exact ERC-20 Amount Conversion:** `prepare_transaction` reads `decimals()` from the verified token contract (and cross-checks dataset `decimals` when configured; it never blindly assumes 18 decimals). User-facing token amounts are validated via `Decimal` (rejecting booleans, `NaN`, `Infinity`, `<= 0`, and fractional precision exceeding token `decimals`) and converted into exact integer base units (`amount * 10**decimals`) with zero binary floating-point rounding or truncation.
+- **Contract Target vs. Recipient Separation:** In the returned `unsigned_tx` envelope, `unsigned_tx["to"]` always points to the **ERC-20 token contract address**, while the recipient wallet (`to`) and `amount_base_units` are ABI-encoded inside `unsigned_tx["data"]` (`transfer(address,uint256)` selector `0xa9059cbb`).
+- **Pending Nonce Snapshot:** The sender `nonce` is queried using `eth_getTransactionCount(from_wallet, "pending")`. A prepared nonce is a point-in-time snapshot and is not reserved on-chain.
+- **Unsigned & Non-Custodial (`signed: false`):** KYROX never accepts, stores, or accesses private keys or seed phrases, and contains no `sign_transaction` or `send_raw_transaction` code paths. Every prepared intent returns `signed: false` and `broadcast: false` so the human user can inspect, simulate, and sign externally in their own wallet on **Base Sepolia (`chainId: 84532` / `0x14a34`)** only.
+- **Missing Deployment Configuration & Mock Provider Testing:** Packaged `data/stocks.json` keeps `token_address: ""` in version control until live Base Sepolia `MockStock.sol` contracts are deployed and supplied via `KYROX_STOCKS_FILE`. When `token_address` is blank, `prepare_transaction` safely rejects with `MISSING_CONFIGURATION`. All positive automated tests in `tests/test_tx.py` use a deterministic mocked Web3 provider fixture (`MOCK PROVIDER · TEST FIXTURE`) rather than live on-chain transactions.
+
+### How `simulate_transaction` Works (`tools/tx.py`)
+
+- **Shared Preparation & Policy Gate Before RPC:** `simulate_transaction(from_wallet, ticker, to, amount)` reuses `prepare_transaction` and `verify_prepared_transaction_intent` rather than duplicating transfer construction. Policy limits (`KYROX_MAX_TX_AMOUNT`, `DEFAULT_MAX_TOKEN_AMOUNT`, `KYROX_APPROVED_TICKERS`, `KYROX_ALLOWED_RECIPIENTS`, and token-contract self-transfer prevention) execute **before** any simulation RPC call. Requests exceeding the configured policy limit are blocked immediately with `POLICY_REJECTED`.
+- **`eth_call` vs. `eth_estimateGas` on Base Sepolia (`chainId: 84532`, Pinned Canonical Block Snapshot):**
+  - **Single Canonical Block Snapshot:** After verifying Base Sepolia (`chainId == 84532`) and contract bytecode, KYROX queries `eth_blockNumber` once, validates it as a non-negative integer, and passes that exact block number to both `eth_call` and `eth_estimateGas` so the two RPC calls cannot evaluate different block heights.
+  - **Allowlisted EIP-1474 Call Object (`build_simulation_call_object`):** Rather than forwarding internal intent metadata or transaction-signing fields (`chainId`, `nonce`, `intent_hash`, `expires_at`, `signed`, `broadcast`), KYROX constructs a dedicated execution-call dictionary containing only the allowlisted EIP-1474 fields (`from`, `to`, `data`, `value: 0`).
+  - **`eth_call` (Execution Dry-Run):** Executes the exact prepared message call (`from: from_wallet`, `to: token_address`, `data: calldata`, `value: 0`) against the captured canonical block number without creating, signing, or broadcasting a transaction. KYROX ABI-decodes the 32-byte `bool` return word from `transfer(address,uint256)` so an explicit `false` return (`0x00...00`) is classified as a failed simulation (`would_succeed: false`, `ERC20_TRANSFER_FALSE`) rather than a false positive.
+  - **`eth_estimateGas` (Gas Unit Estimation):** Only after `eth_call` succeeds and returns `true`, KYROX calls `eth_estimateGas` with the identical execution-call dictionary and pinned block number. `estimated_gas` is returned strictly in **gas units** (`gas_units: "gas"`), never as an ETH or currency fee, and KYROX never invents a fallback gas number if estimation fails.
+- **Error Taxonomy & Provider Outage Separation:** KYROX distinguishes (1) successful simulation (`would_succeed: true`), (2) insufficient token balance reverts (`INSUFFICIENT_TOKEN_BALANCE`, including OpenZeppelin v5 `ERC20InsufficientBalance` selector `0xe450d38c` and v4 `transfer amount exceeds balance`), (3) other contract-level reverts (`SIMULATION_REVERTED`), (4) ERC-20 `false` returns (`ERC20_TRANSFER_FALSE`), (5) policy rejections (`POLICY_REJECTED`), (6) expired/tampered intents (`INTENT_EXPIRED`, `INTENT_TAMPERED`), (7) address/amount/chain/configuration errors, and (8) RPC timeouts (`RPC_TIMEOUT`), connection failures (`RPC_CONNECTION_FAILED`), and malformed provider responses (`MALFORMED_PROVIDER_RESPONSE`). An RPC outage is never misrepresented as an insufficient-balance revert.
+- **Why Simulation Does Not Guarantee Later Execution:** Both `eth_call` and `eth_estimateGas` evaluate blockchain state at a single point in time (`"latest"`). Between simulation and external human wallet signing, balances, allowances, contract pause states, nonces, or gas conditions can change. Human review and external wallet verification remain mandatory.
 
 ---
 
@@ -125,8 +150,11 @@ python -m pip check
 # 3. Copy placeholder configuration (never put private keys or secrets in .env)
 Copy-Item .env.example .env
 
-# 4. Run the test suite
+# 4. Run the test suite (308 automated checks)
 python -m pytest -v
+
+# 5. Execute a portfolio query (uses KYROX_STOCKS_FILE if set, or data/stocks.json)
+python -c "import json; from server import get_portfolio; print(json.dumps(get_portfolio('0x71C7656EC7ab88b098defB751B7401B5f6d8976F'), indent=2))"
 ```
 
 ### macOS & Linux (`bash` / `zsh`)
@@ -142,8 +170,11 @@ python -m pip check
 # 3. Copy placeholder configuration (never put private keys or secrets in .env)
 cp .env.example .env
 
-# 4. Run the test suite
+# 4. Run the test suite (308 automated checks)
 python -m pytest -v
+
+# 5. Execute a portfolio query (uses KYROX_STOCKS_FILE if set, or data/stocks.json)
+python -c "import json; from server import get_portfolio; print(json.dumps(get_portfolio('0x71C7656EC7ab88b098defB751B7401B5f6d8976F'), indent=2))"
 ```
 
 ---

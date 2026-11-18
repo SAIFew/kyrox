@@ -40,6 +40,7 @@ content/**/final/*.png
 content/**/slides/*.png
 content/**/preview.png
 content/day-6-architecture/*.png
+content/day-8-portfolio/*.png
 
 # Video and audio media deliverables
 *.mp4

@@ -55,6 +55,93 @@ SAFE_PUBLIC_FIELD_NAMES: frozenset[str] = frozenset(
         "reference_value",
         "balance",
         "balances",
+        "holdings",
+        "portfolio",
+        "unpriced_holdings",
+        "unpriced_tokens",
+        "warnings",
+        "total_value",
+        "total_value_decimal",
+        "currency",
+        "valuation_basis",
+        "valuation_source",
+        "valuation_status",
+        "environment",
+        "decimals",
+        "raw_balance",
+        "balance_decimal",
+        "value",
+        "value_decimal",
+        "priced",
+        "holding_count",
+        "priced_holding_count",
+        "from_wallet",
+        "to_wallet",
+        "contract_address",
+        "amount",
+        "amount_decimal",
+        "amount_base_units",
+        "raw_amount",
+        "chain_id_hex",
+        "data",
+        "calldata",
+        "function",
+        "nonce",
+        "nonce_strategy",
+        "nonce_note",
+        "unsigned_tx",
+        "chainId",
+        "chainid",
+        "gas",
+        "maxFeePerGas",
+        "maxfeepergas",
+        "maxPriorityFeePerGas",
+        "maxpriorityfeepergas",
+        "gasPrice",
+        "gasprice",
+        "intent_id",
+        "intent_hash",
+        "prepared_at",
+        "expires_at",
+        "ttl_seconds",
+        "signed",
+        "broadcast",
+        "requires_human_approval",
+        "requires_external_signature",
+        "signing_mode",
+        "policy",
+        "passed",
+        "chain_verified",
+        "allowed_chain_id",
+        "ticker_approved",
+        "contract_verified",
+        "recipient_allowed",
+        "max_amount",
+        "next_steps",
+        "instructions",
+        "status",
+        "decimals_source",
+        "would_succeed",
+        "simulation_status",
+        "simulation_outcome",
+        "simulated_at",
+        "block_identifier",
+        "block_number",
+        "block_number_hex",
+        "eth_call_succeeded",
+        "erc20_transfer_returned",
+        "return_data",
+        "estimated_gas",
+        "gas_estimate",
+        "gas_units",
+        "gas_note",
+        "simulation_note",
+        "failure_reason",
+        "revert_reason",
+        "revert_type",
+        "error_code",
+        "error_category",
+        "retryable",
     }
 )
 
@@ -276,6 +363,20 @@ def redact_sensitive_data(
             key_str = str(k)
             if is_sensitive_key(key_str):
                 redacted_dict[key_str] = REDACTED_PLACEHOLDER
+            elif (
+                _normalize_key_name(key_str) == "intent_hash"
+                and isinstance(v, str)
+                and bool(re.fullmatch(r"0x[0-9a-f]{64}", v))
+                and value.get("signed") is False
+            ):
+                redacted_dict[key_str] = v
+            elif (
+                _normalize_key_name(key_str) == "return_data"
+                and isinstance(v, str)
+                and v in ("0x" + ("0" * 64), "0x" + ("0" * 63) + "1")
+                and value.get("signed") is False
+            ):
+                redacted_dict[key_str] = v
             else:
                 redacted_dict[key_str] = redact_sensitive_data(
                     v, _depth=_depth + 1, _seen=next_seen
@@ -332,9 +433,16 @@ class ErrorCode(str, Enum):
     CONTRACT_CALL_FAILED = "CONTRACT_CALL_FAILED"
     INVALID_AMOUNT = "INVALID_AMOUNT"
     DECIMAL_PRECISION_ERROR = "DECIMAL_PRECISION_ERROR"
+    DECIMAL_MISMATCH = "DECIMAL_MISMATCH"
+    CURRENCY_MISMATCH = "CURRENCY_MISMATCH"
+    INVALID_REFERENCE_VALUE = "INVALID_REFERENCE_VALUE"
     POLICY_REJECTED = "POLICY_REJECTED"
     INTENT_EXPIRED = "INTENT_EXPIRED"
     INTENT_TAMPERED = "INTENT_TAMPERED"
+    INSUFFICIENT_TOKEN_BALANCE = "INSUFFICIENT_TOKEN_BALANCE"
+    SIMULATION_REVERTED = "SIMULATION_REVERTED"
+    ERC20_TRANSFER_FALSE = "ERC20_TRANSFER_FALSE"
+    MALFORMED_PROVIDER_RESPONSE = "MALFORMED_PROVIDER_RESPONSE"
     INTERNAL_ERROR = "INTERNAL_ERROR"
 
 
@@ -512,6 +620,34 @@ class ContractCallError(KyroxError, RuntimeError):
     default_category = "contract"
 
 
+class MalformedProviderResponseError(ValidationError):
+    """Raised when an RPC provider returns a malformed, non-conforming, or undecodable payload."""
+
+    default_code = ErrorCode.MALFORMED_PROVIDER_RESPONSE
+    default_category = "rpc"
+
+
+class SimulationRevertError(ContractCallError):
+    """Raised when an EVM simulation dry-run (``eth_call`` or ``eth_estimateGas``) reverts."""
+
+    default_code = ErrorCode.SIMULATION_REVERTED
+    default_category = "simulation"
+
+
+class InsufficientTokenBalanceError(SimulationRevertError):
+    """Raised when an EVM simulation dry-run reverts due to insufficient ERC-20 token balance."""
+
+    default_code = ErrorCode.INSUFFICIENT_TOKEN_BALANCE
+    default_category = "simulation"
+
+
+class Erc20FalseReturnError(ContractCallError):
+    """Raised when an ERC-20 transfer dry-run completes without reverting but returns ``false``."""
+
+    default_code = ErrorCode.ERC20_TRANSFER_FALSE
+    default_category = "simulation"
+
+
 def is_timeout_exception(exc: BaseException) -> bool:
     """Return ``True`` if ``exc`` represents a network or RPC timeout."""
     if isinstance(exc, TimeoutError):
@@ -556,7 +692,11 @@ def classify_error_message(
     elif "checksum" in lower:
         code = ErrorCode.INVALID_ADDRESS_CHECKSUM
         category = "validation"
-    elif "invalid ethereum wallet address" in lower:
+    elif (
+        "invalid ethereum wallet address" in lower
+        or "invalid sender wallet address" in lower
+        or "invalid recipient wallet address" in lower
+    ):
         code = ErrorCode.INVALID_WALLET_ADDRESS
         category = "validation"
     elif "duplicate token contract address" in lower:
@@ -568,7 +708,10 @@ def classify_error_message(
     elif "invalid token contract address" in lower:
         code = ErrorCode.INVALID_CONTRACT_ADDRESS
         category = "validation"
-    elif "missing required configuration" in lower:
+    elif (
+        "missing required configuration" in lower
+        or "not configured in the stock dataset" in lower
+    ):
         code = ErrorCode.MISSING_CONFIGURATION
         category = "configuration"
     elif "configuration" in lower and "invalid" in lower:
@@ -581,16 +724,89 @@ def classify_error_message(
         "unable to connect to base sepolia rpc" in lower
         or "unable to read chain id" in lower
         or "unable to verify contract bytecode" in lower
+        or "unable to read pending nonce" in lower
+        or "unable to read latest block number" in lower
+        or "unable to simulate transfer" in lower
+        or "unable to estimate gas" in lower
     ):
         code = ErrorCode.RPC_CONNECTION_FAILED
+        category = "rpc"
+    elif (
+        "malformed rpc provider response" in lower
+        or "malformed provider response" in lower
+        or "invalid pending nonce returned by rpc provider" in lower
+    ):
+        code = ErrorCode.MALFORMED_PROVIDER_RESPONSE
         category = "rpc"
     elif "unsupported chain id" in lower:
         code = ErrorCode.UNSUPPORTED_CHAIN_ID
         category = "validation"
-    elif "invalid token decimals" in lower or "invalid raw token balance" in lower or "precision" in lower:
+    elif "decimals mismatch" in lower or "decimal mismatch" in lower:
+        code = ErrorCode.DECIMAL_MISMATCH
+        category = "validation"
+    elif (
+        "currency mismatch" in lower
+        or "mixed valuation currencies" in lower
+        or "invalid currency" in lower
+    ):
+        code = ErrorCode.CURRENCY_MISMATCH
+        category = "validation"
+    elif "invalid reference_value" in lower or "invalid reference value" in lower:
+        code = ErrorCode.INVALID_REFERENCE_VALUE
+        category = "validation"
+    elif (
+        "invalid token decimals" in lower
+        or "unable to establish verified token decimals" in lower
+        or "invalid raw token balance" in lower
+        or "precision" in lower
+    ):
         code = ErrorCode.DECIMAL_PRECISION_ERROR
         category = "validation"
-    elif "failed to read token balance" in lower:
+    elif "intent has expired" in lower or "intent expired" in lower:
+        code = ErrorCode.INTENT_EXPIRED
+        category = "policy"
+    elif (
+        "intent tampered" in lower
+        or "intent_hash mismatch" in lower
+        or "transaction target mismatch" in lower
+    ):
+        code = ErrorCode.INTENT_TAMPERED
+        category = "policy"
+    elif (
+        "policy rejection" in lower
+        or "exceeds maximum allowed limit" in lower
+        or "only accepts unsigned intents" in lower
+    ):
+        code = ErrorCode.POLICY_REJECTED
+        category = "policy"
+    elif "invalid transaction amount" in lower:
+        code = ErrorCode.INVALID_AMOUNT
+        category = "validation"
+    elif (
+        "insufficient" in lower
+        and (
+            "balance" in lower
+            or "erc20insufficientbalance" in lower
+            or "exceeds balance" in lower
+        )
+    ) or "transfer amount exceeds balance" in lower:
+        code = ErrorCode.INSUFFICIENT_TOKEN_BALANCE
+        category = "simulation"
+    elif "returned false" in lower and "transfer" in lower:
+        code = ErrorCode.ERC20_TRANSFER_FALSE
+        category = "simulation"
+    elif (
+        "evm simulation reverted" in lower
+        or "gas estimation reverted" in lower
+        or "execution reverted" in lower
+    ):
+        code = ErrorCode.SIMULATION_REVERTED
+        category = "simulation"
+    elif (
+        "failed to read token balance" in lower
+        or "failed to read token decimals" in lower
+        or "failed to build transfer transaction" in lower
+    ):
         code = ErrorCode.CONTRACT_CALL_FAILED
         category = "contract"
     else:
