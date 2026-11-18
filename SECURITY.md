@@ -11,7 +11,7 @@
 
 1. **Never Submit Private Keys or Seed Phrases:** Never enter, commit, paste, or attach private keys, seed phrases, mnemonics, keystore files, recovery codes, passwords, or live API secrets in tool calls, `.env` files, GitHub Issues, Pull Requests, or discussions.
 2. **Non-Custodial Boundary:** KYROX `v0.1` is designed strictly for read operations, unsigned transaction preparation (`signed: false`), and dry-run simulation/policy checks. It must never hold private keys, sign transactions, or broadcast transactions on-chain.
-3. **Redacted Audit Logging & Boundary Validation:** Tool arguments, RPC URLs, and exception details are recursively scrubbed by `tools/errors.py` and `tools/log.py` before being written to local JSONL audit logs (`logs/`, ignored by Git) or returned in caller-facing error dictionaries. Zero addresses (`0x0000...0000`), corrupted mixed-case EIP-55 checksums, and non-Base-Sepolia chain IDs are rejected at the validation boundary.
+3. **Redacted Audit Logging & Boundary Validation:** Tool arguments, RPC URLs, and exception details are recursively scrubbed by `tools/errors.py` and `tools/log.py` before being written to local JSONL audit logs (`logs/`, ignored by Git) or returned in caller-facing error dictionaries. Zero addresses (`0x0000...0000`), corrupted mixed-case EIP-55 checksums, non-Base-Sepolia chain IDs, out-of-range `uint256` balances/amounts, contract/dataset decimal mismatches, unconfigured or bytecode-empty contracts, tampered/expired transaction intents, ERC-20 `false` transfer returns, malformed RPC provider payloads, and mixed-currency portfolio totals are rejected or guarded at the validation boundary.
 
 ## Reporting a Vulnerability
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import threading
 from typing import Any
@@ -17,6 +18,8 @@ from tools.errors import (
 )
 
 STOCKS_FILE: Path = Path(__file__).resolve().parent.parent / "data" / "stocks.json"
+_DEFAULT_STOCKS_FILE: Path = STOCKS_FILE
+STOCKS_FILE_ENV_VAR: str = "KYROX_STOCKS_FILE"
 REQUIRED_STOCK_FIELDS: frozenset[str] = frozenset(
     {"ticker", "stock", "reference_value", "token_address"}
 )
@@ -93,7 +96,36 @@ def _validate_stock_record(record: Any, index: int) -> dict[str, Any]:
             f"Invalid stock record at index {index}: 'token_address' must be a string."
         )
 
+    if "decimals" in record and record["decimals"] is not None:
+        decimals = record["decimals"]
+        if isinstance(decimals, bool) or not isinstance(decimals, int) or decimals < 0 or decimals > 77:
+            raise DatasetSchemaError(
+                f"Invalid stock record at index {index}: 'decimals' must be an integer between 0 and 77."
+            )
+
+    if "currency" in record and record["currency"] is not None:
+        currency = record["currency"]
+        if not isinstance(currency, str) or not currency.strip():
+            raise DatasetSchemaError(
+                f"Invalid stock record at index {index}: 'currency' must be a non-empty string."
+            )
+
     return dict(record)
+
+
+def resolve_stocks_file(file_path: Path | str | None = None) -> Path:
+    """Resolve the stock dataset path from explicit argument, module attribute, or ``KYROX_STOCKS_FILE``."""
+    if file_path is not None:
+        return Path(file_path)
+
+    if STOCKS_FILE != _DEFAULT_STOCKS_FILE:
+        return STOCKS_FILE
+
+    env_path = os.getenv(STOCKS_FILE_ENV_VAR, "").strip()
+    if env_path:
+        return Path(env_path)
+
+    return STOCKS_FILE
 
 
 def load_stocks(
@@ -122,7 +154,7 @@ def load_stocks(
             malformed JSON, an invalid data structure, non-finite numbers, or duplicate tickers.
     """
     global _CACHE_KEY, _CACHED_RECORDS
-    target_path = Path(file_path) if file_path is not None else STOCKS_FILE
+    target_path = resolve_stocks_file(file_path)
 
     if not target_path.is_file():
         with _CACHE_LOCK:

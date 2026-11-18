@@ -357,6 +357,37 @@ def _summarize_result(result: Any) -> dict[str, Any]:
             summary["chain"] = result["chain"]
         if isinstance(result.get("balances"), list):
             summary["balance_count"] = len(result["balances"])
+        if isinstance(result.get("holdings"), list):
+            summary["holding_count"] = len(result["holdings"])
+        if "currency" in result:
+            summary["currency"] = result["currency"]
+        if isinstance(result.get("unpriced_holdings"), list):
+            summary["unpriced_count"] = len(result["unpriced_holdings"])
+        if "signed" in result:
+            summary["status"] = result.get("status")
+            summary["signed"] = result["signed"]
+            if "from_wallet" in result:
+                summary["from_wallet"] = result["from_wallet"]
+            if "to" in result:
+                summary["to"] = result["to"]
+            if "token_address" in result:
+                summary["token_address"] = result["token_address"]
+            if "amount_decimal" in result:
+                summary["amount_decimal"] = result["amount_decimal"]
+            if "amount_base_units" in result:
+                summary["amount_base_units"] = result["amount_base_units"]
+            if "intent_id" in result:
+                summary["intent_id"] = result["intent_id"]
+        if "would_succeed" in result:
+            summary["would_succeed"] = result["would_succeed"]
+            if "simulation_status" in result:
+                summary["simulation_status"] = result["simulation_status"]
+            if "estimated_gas" in result:
+                summary["estimated_gas"] = result["estimated_gas"]
+            if "block_number" in result:
+                summary["block_number"] = result["block_number"]
+            if "block_identifier" in result:
+                summary["block_identifier"] = result["block_identifier"]
         return summary
 
     if isinstance(result, list):
@@ -433,6 +464,15 @@ def audit_tool_call(
                 classification = classify_error_message(raw_error)
                 safe_result = dict(result)
                 safe_result["error"] = classification.message
+                err_context: dict[str, Any] = {"response_type": "error_dict"}
+                if "would_succeed" in safe_result:
+                    err_context["would_succeed"] = safe_result["would_succeed"]
+                    if "simulation_status" in safe_result:
+                        err_context["simulation_status"] = safe_result["simulation_status"]
+                    if "signed" in safe_result:
+                        err_context["signed"] = safe_result["signed"]
+                    if "intent_id" in safe_result:
+                        err_context["intent_id"] = safe_result["intent_id"]
                 logger.log_event(
                     tool=resolved_tool_name,
                     status="error",
@@ -442,7 +482,7 @@ def audit_tool_call(
                     error_category=classification.category,
                     retryable=classification.retryable,
                     error_message=classification.message,
-                    context={"response_type": "error_dict"},
+                    context=err_context,
                 )
                 return safe_result
 
