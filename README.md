@@ -1,6 +1,6 @@
 # KYROX (`kyrox-mcp`)
 
-**Status:** `v0.1` Active Development (`VERIFIED`: Python 3.13 environment, `FastMCP` server, `hello_kyrox`, `get_stock_info`, `list_stocks`, centralized error handling, redacted JSONL audit logging & STDIO protocol framing; `IN PROGRESS`: `get_wallet_balances`, `get_portfolio`, `prepare_transaction` & `simulate_transaction` — code & `308` offline/MCP/mock-provider tests verified, awaiting live Base Sepolia `MockStock.sol` deployment; `PLANNED`: standalone policy module)
+**Status:** `v0.1` Active Development (`VERIFIED`: Python 3.13 environment, `FastMCP` server, `hello_kyrox`, `get_stock_info`, `list_stocks`, centralized error handling, redacted JSONL audit logging, standalone transaction safety policy module `tools/policy.py` & STDIO protocol framing; `IN PROGRESS`: `get_wallet_balances`, `get_portfolio`, `prepare_transaction` & `simulate_transaction` — code & `394` offline/MCP/mock-provider tests verified, awaiting live Base Sepolia `MockStock.sol` deployment)
 **Target Network:** Base Sepolia Testnet (`chainId: 84532`) · Labelled Mock Token Fixtures (`mock`)
 **Runtime Stack:** Python 3.11+ (3.13 x64 baseline) · MCP Python SDK v1 (`FastMCP`, `mcp[cli]>=1.28,<2`) · `web3.py` (`web3>=8.0,<9`)
 **License:** Apache-2.0
@@ -50,7 +50,7 @@ KYROX Python MCP Server (FastMCP)  [VERIFIED]
         +--> Transaction Builder -----> Unsigned transaction payload only (signed: false)  [IN PROGRESS]
         +--> Simulator ---------------> eth_call + gas estimate + policy checks on exact intent  [IN PROGRESS]
         +--> Audit Logger & Errors ---> Redacted JSONL call logs & error classification  [VERIFIED]
-        +--> Transaction Policy Gate -> Allowlist & per-tx bounds  [PLANNED]
+        +--> Transaction Policy Gate -> 50-token max, ticker allowlist & human approval (tools/policy.py)  [VERIFIED]
 
 Human reviews and signs outside KYROX in their own external wallet.
 KYROX v0.1 never receives private keys, never signs, and never broadcasts.
@@ -74,7 +74,7 @@ KYROX follows a strict evidence-first policy: **every component is labelled by i
 | Base Sepolia wallet balance & portfolio reader (`get_wallet_balances`, `get_portfolio`) | `IN PROGRESS` | [tools/wallet.py](tools/wallet.py), [tests/test_wallet.py](tests/test_wallet.py), [tests/test_portfolio.py](tests/test_portfolio.py), and [tests/test_stdio.py](tests/test_stdio.py) (`107 passed` wallet/portfolio/STDIO tests covering zero-address, EIP-55 checksum, `uint256` bounds, contract vs. dataset decimal consistency, 100-digit `Decimal` valuation, currency-mismatch protection, and explicit `unpriced_holdings`; packaged `data/stocks.json` remains unchanged with blank `token_address` fields while live Base Sepolia `tAAPL`, `tTSLA`, `tNVDA` addresses are loaded locally via `KYROX_STOCKS_FILE`). |
 | Structured JSONL audit logging & centralized error handling (`tools/log.py`, `tools/errors.py`) | `VERIFIED` | [tools/log.py](tools/log.py), [tools/errors.py](tools/errors.py), and [tests/test_logging_and_errors.py](tests/test_logging_and_errors.py) (`14 passed` covering UTC JSONL audit logs, recursive secret redaction, size-based log rotation, concurrency, and retryable vs. non-retryable error classification). |
 | Unsigned ERC-20 transaction builder & EVM simulator (`prepare_transaction`, `simulate_transaction`, `tools/tx.py`) | `IN PROGRESS` | [tools/tx.py](tools/tx.py) and [tests/test_tx.py](tests/test_tx.py) (`146 passed` unit, security, serialization, simulation, and FastMCP tests using deterministic mock-provider and transport-level JSON-RPC fixtures; builds unsigned `transfer(to, amount_base_units)` intents with `signed: false`, SHA-256 `intent_hash`, expiration window, policy checks, and dry-runs execution via `eth_call` + `eth_estimateGas` pinned to a single canonical Base Sepolia block snapshot; awaiting live Base Sepolia `MockStock.sol` deployment). |
-| Standalone transaction policy module | `PLANNED` | Specified for upcoming `v0.1` milestones (per-tx bounds, ticker/recipient allowlists, and self-transfer guards are already enforced in `tools/tx.py`). |
+| Transaction safety policy module (`tools/policy.py`) | `VERIFIED` | [tools/policy.py](tools/policy.py) and [tests/test_policy.py](tests/test_policy.py) (`86 passed` policy unit, integration, audit, and security regression tests; enforces the `50`-token default per-transaction maximum, approved ticker allowlist `tAAPL` / `tTSLA` / `tNVDA`, positive finite `Decimal` amounts, token-decimal precision, `requires_human_approval: true`, independent pre-RPC enforcement in both `prepare_transaction` and `simulate_transaction`, and fail-closed JSONL audit logging of every allowed and denied policy decision). |
 
 ---
 
@@ -117,6 +117,15 @@ All `v0.1` demonstrations operate exclusively on **Base Sepolia testnet (`chainI
 - **Error Taxonomy & Provider Outage Separation:** KYROX distinguishes (1) successful simulation (`would_succeed: true`), (2) insufficient token balance reverts (`INSUFFICIENT_TOKEN_BALANCE`, including OpenZeppelin v5 `ERC20InsufficientBalance` selector `0xe450d38c` and v4 `transfer amount exceeds balance`), (3) other contract-level reverts (`SIMULATION_REVERTED`), (4) ERC-20 `false` returns (`ERC20_TRANSFER_FALSE`), (5) policy rejections (`POLICY_REJECTED`), (6) expired/tampered intents (`INTENT_EXPIRED`, `INTENT_TAMPERED`), (7) address/amount/chain/configuration errors, and (8) RPC timeouts (`RPC_TIMEOUT`), connection failures (`RPC_CONNECTION_FAILED`), and malformed provider responses (`MALFORMED_PROVIDER_RESPONSE`). An RPC outage is never misrepresented as an insufficient-balance revert.
 - **Why Simulation Does Not Guarantee Later Execution:** Both `eth_call` and `eth_estimateGas` evaluate blockchain state at a single point in time (`"latest"`). Between simulation and external human wallet signing, balances, allowances, contract pause states, nonces, or gas conditions can change. Human review and external wallet verification remain mandatory.
 
+### How the Transaction Safety Policy Works (`tools/policy.py`)
+
+- **50-Token Default Transaction Maximum:** `DEFAULT_MAX_TOKEN_AMOUNT` is `50` tokens per transaction (`amount <= 50` inclusive boundary: `10`, `49`, and `50` are allowed by the amount policy; `50.01` and `100` are denied with `POLICY_REJECTED`). Operators can tighten the limit below `50` via `KYROX_MAX_TOKEN_AMOUNT` or `KYROX_MAX_TX_AMOUNT`, while values above the `50`-token safety ceiling (`HARD_MAX_TOKEN_AMOUNT = 50`) are rejected as `INVALID_CONFIGURATION`.
+- **Three Approved Tickers (`tAAPL`, `tTSLA`, `tNVDA`):** Only `tAAPL`, `tTSLA`, and `tNVDA` are permitted by the canonical ticker allowlist (`CANONICAL_APPROVED_TICKERS`). Unknown tickers (and arbitrary extra entries injected into a custom dataset file or `KYROX_APPROVED_TICKERS`) are rejected before any RPC call.
+- **Strictly Positive, Finite `Decimal` Amounts & Token Precision:** Zero, negative values, `NaN`, `+Infinity`, `-Infinity`, booleans (`True`/`False`), non-numeric strings, and fractional amounts exceeding the token's supported decimal precision are deterministically rejected using `Decimal` arithmetic (never binary floating-point conversion).
+- **Mandatory Human Approval (`requires_human_approval = True`):** Every policy decision and transaction tool response—whether allowed or denied—retains `requires_human_approval: true`, `signed: false`, and `broadcast: false`. Passing the policy check is **not** human approval and **not** transaction execution authorization; any attempt to pass override flags (`requires_human_approval=False` or `human_approved=True`) is rejected.
+- **Independent Enforcement in Both Transaction Tools:** Both `prepare_transaction` and `simulate_transaction` independently invoke the central policy gate (`_enforce_pre_rpc_transaction_policy` / `evaluate_transaction_policy`) before any unsigned transaction construction, calldata encoding, `eth_call`, or `eth_estimateGas` execution.
+- **Fail-Closed Policy Decision Audit Logging:** Every allowed and denied policy decision is recorded in `logs/audit.jsonl` via `tools/log.py` with structured metadata (`event`, `tool`, `ticker`, `normalized_amount`, `effective_max_amount`, `allowed`, `decision`, `reasons`, `requires_human_approval`, `policy_version`) and recursive secret redaction. If writing to the audit log fails during an allowed transaction or policy decision, KYROX fails closed and rejects the operation.
+
 ---
 
 ## 7. Technology Stack
@@ -150,7 +159,7 @@ python -m pip check
 # 3. Copy placeholder configuration (never put private keys or secrets in .env)
 Copy-Item .env.example .env
 
-# 4. Run the test suite (308 automated checks)
+# 4. Run the test suite (394 automated checks)
 python -m pytest -v
 
 # 5. Execute a portfolio query (uses KYROX_STOCKS_FILE if set, or data/stocks.json)
@@ -170,7 +179,7 @@ python -m pip check
 # 3. Copy placeholder configuration (never put private keys or secrets in .env)
 cp .env.example .env
 
-# 4. Run the test suite (308 automated checks)
+# 4. Run the test suite (394 automated checks)
 python -m pytest -v
 
 # 5. Execute a portfolio query (uses KYROX_STOCKS_FILE if set, or data/stocks.json)
