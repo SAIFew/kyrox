@@ -570,9 +570,15 @@ def test_validate_token_amount_precision_and_bounds() -> None:
     assert dec_val == Decimal("12.5")
     assert base_units == 125 * 10**17
 
-    dec_int, units_int = validate_token_amount(100, decimals=6)
-    assert dec_int == Decimal(100)
-    assert units_int == 100 * 10**6
+    dec_int, units_int = validate_token_amount(50, decimals=6)
+    assert dec_int == Decimal(50)
+    assert units_int == 50 * 10**6
+
+    dec_custom, units_custom = validate_token_amount(
+        100, decimals=6, max_amount=Decimal("100")
+    )
+    assert dec_custom == Decimal(100)
+    assert units_custom == 100 * 10**6
 
     # Reject zero, negative, NaN, Infinity, booleans, empty strings
     for invalid_amt in (0, "0", -5, "-0.01", float("nan"), float("inf"), True, False, None, "abc"):
@@ -587,7 +593,11 @@ def test_validate_token_amount_precision_and_bounds() -> None:
         validate_token_amount("1.1234567", decimals=6)
     assert exc_prec.value.code == ErrorCode.DECIMAL_PRECISION_ERROR
 
-    # Reject amount exceeding policy max_amount
+    # Reject amount exceeding default 50-token policy max_amount and custom max_amount
+    with pytest.raises(PolicyViolationError, match="exceeds maximum allowed limit") as exc_default_pol:
+        validate_token_amount(100, decimals=6)
+    assert exc_default_pol.value.code == ErrorCode.POLICY_REJECTED
+
     with pytest.raises(PolicyViolationError, match="exceeds maximum allowed limit") as exc_pol:
         validate_token_amount("5000", decimals=18, max_amount=Decimal("1000"))
     assert exc_pol.value.code == ErrorCode.POLICY_REJECTED
