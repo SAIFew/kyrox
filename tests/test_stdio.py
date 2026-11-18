@@ -134,6 +134,38 @@ def test_stdio_protocol_framing_and_clean_stdout(tmp_path: Path) -> None:
                 },
             }
         ),
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 7,
+                "method": "tools/call",
+                "params": {
+                    "name": "prepare_transaction",
+                    "arguments": {
+                        "from_wallet": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+                        "ticker": "tAAPL",
+                        "to": "0x2222222222222222222222222222222222222222",
+                        "amount": 100,
+                    },
+                },
+            }
+        ),
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 8,
+                "method": "tools/call",
+                "params": {
+                    "name": "simulate_transaction",
+                    "arguments": {
+                        "from_wallet": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+                        "ticker": "tAAPL",
+                        "to": "0x2222222222222222222222222222222222222222",
+                        "amount": 100,
+                    },
+                },
+            }
+        ),
     ]
     stdin_payload = "\n".join(requests_lines) + "\n"
 
@@ -166,7 +198,7 @@ def test_stdio_protocol_framing_and_clean_stdout(tmp_path: Path) -> None:
         if proc.poll() is None:
             proc.kill()
 
-    assert len(stdout_lines) == 6
+    assert len(stdout_lines) == 8
 
     parsed_messages: dict[int, dict[str, Any]] = {}
     for line in stdout_lines:
@@ -205,9 +237,25 @@ def test_stdio_protocol_framing_and_clean_stdout(tmp_path: Path) -> None:
     tx_err = json.loads(parsed_messages[5]["result"]["content"][0]["text"])
     assert "error" in tx_err
     assert "not configured in the stock dataset" in tx_err["error"]
+    assert tx_err["requires_human_approval"] is True
 
     assert 6 in parsed_messages
     sim_err = json.loads(parsed_messages[6]["result"]["content"][0]["text"])
     assert "error" in sim_err
     assert "not configured in the stock dataset" in sim_err["error"]
+    assert sim_err["requires_human_approval"] is True
+
+    assert 7 in parsed_messages
+    tx_policy_err = json.loads(parsed_messages[7]["result"]["content"][0]["text"])
+    assert "error" in tx_policy_err
+    assert "exceeds maximum allowed limit (50)" in tx_policy_err["error"]
+    assert tx_policy_err["requires_human_approval"] is True
+    assert tx_policy_err["policy"]["allowed"] is False
+
+    assert 8 in parsed_messages
+    sim_policy_err = json.loads(parsed_messages[8]["result"]["content"][0]["text"])
+    assert "error" in sim_policy_err
+    assert "exceeds maximum allowed limit (50)" in sim_policy_err["error"]
+    assert sim_policy_err["requires_human_approval"] is True
+    assert sim_policy_err["policy"]["allowed"] is False
 
