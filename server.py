@@ -134,7 +134,11 @@ def get_portfolio(wallet: str) -> dict[str, Any]:
 
 
 @mcp.tool(annotations=READ_ONLY_ONCHAIN_ANNOTATIONS)
-@audit_tool_call("prepare_transaction", reraise_exceptions=(FileNotFoundError,))
+@audit_tool_call(
+    "prepare_transaction",
+    reraise_exceptions=(FileNotFoundError,),
+    fail_closed=True,
+)
 def prepare_transaction(
     from_wallet: str,
     ticker: str,
@@ -165,7 +169,11 @@ def prepare_transaction(
 
 
 @mcp.tool(annotations=READ_ONLY_ONCHAIN_ANNOTATIONS)
-@audit_tool_call("simulate_transaction", reraise_exceptions=(FileNotFoundError,))
+@audit_tool_call(
+    "simulate_transaction",
+    reraise_exceptions=(FileNotFoundError,),
+    fail_closed=True,
+)
 def simulate_transaction(
     from_wallet: str,
     ticker: str,
