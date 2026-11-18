@@ -10,7 +10,7 @@ Features:
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 import functools
 import inspect
@@ -24,6 +24,7 @@ from typing import Any, TypeVar
 
 from tools.errors import (
     REDACTED_PLACEHOLDER,
+    AuditLogError,
     ErrorClassification,
     ErrorCode,
     classify_error_message,
@@ -45,6 +46,12 @@ _LOGGER_LOCK = threading.RLock()
 _ACTIVE_LOGGER: AuditLogger | None = None
 _ACTIVE_CONFIG_KEY: tuple[str, str, int, int] | None = None
 _LAST_ENV_SIGNATURE: tuple[str, str, str, str] | None = None
+_AUDIT_CALL_STATE = threading.local()
+
+
+def is_in_audited_tool_call() -> bool:
+    """Return ``True`` when the current thread is already inside an ``@audit_tool_call`` wrapper."""
+    return getattr(_AUDIT_CALL_STATE, "depth", 0) > 0
 
 
 def _current_env_signature() -> tuple[str, str, str, str]:
@@ -220,6 +227,7 @@ class AuditLogger:
         context: Mapping[str, Any] | None = None,
         event: str = "tool_call",
         level: str | None = None,
+        fail_closed: bool = False,
     ) -> dict[str, Any]:
         """Write a single redacted JSONL audit entry and return the recorded dict."""
         normalized_status = "ok" if status == "ok" else "error"
@@ -280,6 +288,12 @@ class AuditLogger:
                     f"[KYROX-AUDIT-FALLBACK] {redact_text(str(exc))} | "
                     f"{serialized_line}"
                 )
+                if fail_closed:
+                    raise AuditLogError(
+                        f"Audit logging failed for {redact_text(str(tool))}; "
+                        f"failing closed: {redact_text(str(exc))}",
+                        code=ErrorCode.INTERNAL_ERROR,
+                    ) from exc
 
         return entry
 
@@ -345,6 +359,44 @@ def reset_audit_logger() -> None:
         _LAST_ENV_SIGNATURE = None
 
 
+def _extract_policy_audit_context(
+    result: Mapping[str, Any],
+    target_context: dict[str, Any],
+) -> None:
+    """Populate structured policy decision metadata into ``target_context`` when present."""
+    if "requires_human_approval" in result:
+        target_context["requires_human_approval"] = bool(
+            result["requires_human_approval"]
+        )
+    policy_obj = result.get("policy")
+    if isinstance(policy_obj, Mapping):
+        allowed_flag = bool(policy_obj.get("allowed", policy_obj.get("passed", False)))
+        passed_flag = bool(policy_obj.get("passed", allowed_flag))
+        target_context["policy"] = dict(policy_obj)
+        target_context["allowed"] = allowed_flag
+        target_context["passed"] = passed_flag
+        target_context["decision"] = "allowed" if allowed_flag else "denied"
+        if "ticker" in policy_obj and policy_obj["ticker"] is not None:
+            target_context.setdefault("ticker", policy_obj["ticker"])
+        if "amount_decimal" in policy_obj and policy_obj["amount_decimal"] is not None:
+            target_context.setdefault("amount_decimal", policy_obj["amount_decimal"])
+            target_context["normalized_amount"] = policy_obj["amount_decimal"]
+        elif "amount_decimal" in result and result["amount_decimal"] is not None:
+            target_context["normalized_amount"] = result["amount_decimal"]
+        if "max_amount" in policy_obj:
+            target_context["max_amount"] = policy_obj["max_amount"]
+            target_context["effective_max_amount"] = policy_obj["max_amount"]
+        reasons_raw = policy_obj.get("reasons", [])
+        reasons_list = list(reasons_raw) if isinstance(reasons_raw, (list, tuple)) else []
+        target_context["reasons"] = reasons_list
+        target_context["denial_reasons"] = reasons_list
+        target_context["requires_human_approval"] = bool(
+            policy_obj.get("requires_human_approval", True)
+        )
+        if "policy_version" in policy_obj:
+            target_context["policy_version"] = policy_obj["policy_version"]
+
+
 def _summarize_result(result: Any) -> dict[str, Any]:
     """Build a compact, non-sensitive summary of a successful tool return value."""
     if isinstance(result, dict):
@@ -374,6 +426,7 @@ def _summarize_result(result: Any) -> dict[str, Any]:
                 summary["token_address"] = result["token_address"]
             if "amount_decimal" in result:
                 summary["amount_decimal"] = result["amount_decimal"]
+                summary["normalized_amount"] = result["amount_decimal"]
             if "amount_base_units" in result:
                 summary["amount_base_units"] = result["amount_base_units"]
             if "intent_id" in result:
@@ -388,6 +441,7 @@ def _summarize_result(result: Any) -> dict[str, Any]:
                 summary["block_number"] = result["block_number"]
             if "block_identifier" in result:
                 summary["block_identifier"] = result["block_identifier"]
+        _extract_policy_audit_context(result, summary)
         return summary
 
     if isinstance(result, list):
@@ -408,20 +462,61 @@ def _bind_call_arguments(
     try:
         sig = inspect.signature(func)
         bound = sig.bind_partial(*args, **kwargs)
-        return dict(bound.arguments)
+        return {
+            k: v for k, v in bound.arguments.items() if not str(k).startswith("_")
+        }
     except Exception:
         fallback: dict[str, Any] = {}
         if args:
             fallback["positional_args"] = list(args)
         if kwargs:
-            fallback.update(kwargs)
+            fallback.update(
+                {k: v for k, v in kwargs.items() if not str(k).startswith("_")}
+            )
         return fallback
+
+
+def _build_fail_closed_audit_response(
+    tool_name: str,
+    audit_exc: BaseException,
+) -> dict[str, Any]:
+    """Build a fail-closed rejection dictionary when audit logging fails on an allowed operation."""
+    raw_detail = redact_text(str(audit_exc)).strip()
+    if raw_detail.lower().startswith("audit logging failed"):
+        safe_msg = raw_detail
+    else:
+        safe_msg = (
+            f"Audit logging failed for {redact_text(tool_name)}; "
+            f"failing closed: {raw_detail}"
+        )
+    return {
+        "error": safe_msg,
+        "error_code": ErrorCode.INTERNAL_ERROR.value,
+        "error_category": "audit",
+        "retryable": False,
+        "status": "rejected",
+        "signed": False,
+        "broadcast": False,
+        "requires_human_approval": True,
+        "requires_external_signature": True,
+        "signing_mode": "external_wallet_only",
+        "policy": {
+            "passed": False,
+            "allowed": False,
+            "requires_human_approval": True,
+            "reasons": [safe_msg],
+            "error_code": ErrorCode.INTERNAL_ERROR.value,
+            "error_category": "audit",
+            "policy_version": "v0.1-day11",
+        },
+    }
 
 
 def audit_tool_call(
     tool_name: str | None = None,
     *,
     reraise_exceptions: tuple[type[BaseException], ...] = (),
+    fail_closed: bool = False,
 ) -> Callable[[F], F]:
     """Decorator that wraps a KYROX tool with structured JSONL audit logging and error handling."""
 
@@ -430,70 +525,94 @@ def audit_tool_call(
 
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
+            if is_in_audited_tool_call():
+                return func(*args, **kwargs)
+
+            current_depth = getattr(_AUDIT_CALL_STATE, "depth", 0)
+            _AUDIT_CALL_STATE.depth = current_depth + 1
             start = time.perf_counter()
             bound_args = _bind_call_arguments(func, args, kwargs)
             logger = get_audit_logger()
 
             try:
-                result = func(*args, **kwargs)
-            except BaseException as exc:
+                try:
+                    result = func(*args, **kwargs)
+                except BaseException as exc:
+                    duration_ms = (time.perf_counter() - start) * 1000.0
+                    if isinstance(exc, Exception):
+                        classification: ErrorClassification = classify_exception(
+                            exc, tool_name=resolved_tool_name
+                        )
+                        try:
+                            logger.log_event(
+                                tool=resolved_tool_name,
+                                status="error",
+                                args=bound_args,
+                                duration_ms=duration_ms,
+                                error_code=classification.code,
+                                error_category=classification.category,
+                                retryable=classification.retryable,
+                                error_message=classification.message,
+                                context={"exception_type": type(exc).__name__},
+                            )
+                        except Exception:
+                            pass
+                        if reraise_exceptions and isinstance(exc, reraise_exceptions):
+                            raise
+                        return classification.to_response()
+                    raise
+
                 duration_ms = (time.perf_counter() - start) * 1000.0
-                if isinstance(exc, Exception):
-                    classification: ErrorClassification = classify_exception(
-                        exc, tool_name=resolved_tool_name
-                    )
+                if isinstance(result, dict) and "error" in result:
+                    raw_error = str(result.get("error", ""))
+                    classification = classify_error_message(raw_error)
+                    safe_result = dict(result)
+                    safe_result["error"] = classification.message
+                    err_context: dict[str, Any] = {"response_type": "error_dict"}
+                    if "would_succeed" in safe_result:
+                        err_context["would_succeed"] = safe_result["would_succeed"]
+                        if "simulation_status" in safe_result:
+                            err_context["simulation_status"] = safe_result["simulation_status"]
+                        if "signed" in safe_result:
+                            err_context["signed"] = safe_result["signed"]
+                        if "intent_id" in safe_result:
+                            err_context["intent_id"] = safe_result["intent_id"]
+                    elif "signed" in safe_result:
+                        err_context["signed"] = safe_result["signed"]
+                    _extract_policy_audit_context(safe_result, err_context)
+                    try:
+                        logger.log_event(
+                            tool=resolved_tool_name,
+                            status="error",
+                            args=bound_args,
+                            duration_ms=duration_ms,
+                            error_code=classification.code,
+                            error_category=classification.category,
+                            retryable=classification.retryable,
+                            error_message=classification.message,
+                            context=err_context,
+                        )
+                    except Exception:
+                        pass
+                    return safe_result
+
+                try:
                     logger.log_event(
                         tool=resolved_tool_name,
-                        status="error",
+                        status="ok",
                         args=bound_args,
                         duration_ms=duration_ms,
-                        error_code=classification.code,
-                        error_category=classification.category,
-                        retryable=classification.retryable,
-                        error_message=classification.message,
-                        context={"exception_type": type(exc).__name__},
+                        context=_summarize_result(result),
+                        fail_closed=fail_closed,
                     )
-                    if reraise_exceptions and isinstance(exc, reraise_exceptions):
-                        raise
-                    return classification.to_response()
-                raise
-
-            duration_ms = (time.perf_counter() - start) * 1000.0
-            if isinstance(result, dict) and "error" in result:
-                raw_error = str(result.get("error", ""))
-                classification = classify_error_message(raw_error)
-                safe_result = dict(result)
-                safe_result["error"] = classification.message
-                err_context: dict[str, Any] = {"response_type": "error_dict"}
-                if "would_succeed" in safe_result:
-                    err_context["would_succeed"] = safe_result["would_succeed"]
-                    if "simulation_status" in safe_result:
-                        err_context["simulation_status"] = safe_result["simulation_status"]
-                    if "signed" in safe_result:
-                        err_context["signed"] = safe_result["signed"]
-                    if "intent_id" in safe_result:
-                        err_context["intent_id"] = safe_result["intent_id"]
-                logger.log_event(
-                    tool=resolved_tool_name,
-                    status="error",
-                    args=bound_args,
-                    duration_ms=duration_ms,
-                    error_code=classification.code,
-                    error_category=classification.category,
-                    retryable=classification.retryable,
-                    error_message=classification.message,
-                    context=err_context,
-                )
-                return safe_result
-
-            logger.log_event(
-                tool=resolved_tool_name,
-                status="ok",
-                args=bound_args,
-                duration_ms=duration_ms,
-                context=_summarize_result(result),
-            )
-            return result
+                except Exception as audit_exc:
+                    if fail_closed:
+                        return _build_fail_closed_audit_response(
+                            resolved_tool_name, audit_exc
+                        )
+                return result
+            finally:
+                _AUDIT_CALL_STATE.depth = current_depth
 
         return wrapper  # type: ignore[return-value]
 
@@ -510,6 +629,7 @@ __all__ = [
     "audit_tool_call",
     "configure_audit_logger",
     "get_audit_logger",
+    "is_in_audited_tool_call",
     "is_sensitive_key",
     "redact_sensitive_data",
     "redact_text",

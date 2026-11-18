@@ -65,6 +65,29 @@ from tools.errors import (
     redact_text,
     validate_token_amount,
 )
+from tools.log import audit_tool_call
+from tools.policy import (
+    ALLOWED_RECIPIENTS_ENV_VAR,
+    APPROVED_TICKERS_ENV_VAR,
+    CANONICAL_APPROVED_TICKERS,
+    DEFAULT_APPROVED_TICKERS,
+    HARD_MAX_TOKEN_AMOUNT,
+    MAX_TOKEN_AMOUNT_ENV_VAR,
+    MAX_TX_AMOUNT_ENV_VAR,
+    POLICY_VERSION,
+    PolicyDecision,
+    build_policy_rejection_response,
+    check_policy,
+    evaluate_transaction_policy,
+    get_allowed_recipients,
+    get_approved_tickers,
+    get_approved_tickers_canonical,
+    get_max_token_amount,
+    get_max_tx_amount,
+    validate_approved_ticker,
+    validate_recipient_address,
+    validate_sender_address,
+)
 from tools.stocks import load_stocks
 from tools.wallet import (
     BASE_SEPOLIA_CHAIN_ID,
@@ -136,9 +159,6 @@ FORBIDDEN_SIMULATION_CALL_KEYS: frozenset[str] = frozenset(
     }
 )
 
-MAX_TX_AMOUNT_ENV_VAR: str = "KYROX_MAX_TX_AMOUNT"
-APPROVED_TICKERS_ENV_VAR: str = "KYROX_APPROVED_TICKERS"
-ALLOWED_RECIPIENTS_ENV_VAR: str = "KYROX_ALLOWED_RECIPIENTS"
 INTENT_TTL_ENV_VAR: str = "KYROX_INTENT_TTL_SECONDS"
 
 NONCE_SNAPSHOT_NOTE: str = (
@@ -198,102 +218,6 @@ ERC20_TRANSFER_ABI: list[dict[str, Any]] = [
 ]
 
 _ABI_WEB3 = Web3()
-
-
-def validate_sender_address(from_wallet: str) -> str:
-    """Validate the sender (``from_wallet``) Ethereum address and return its EIP-55 checksum."""
-    if not isinstance(from_wallet, str) or not from_wallet.strip():
-        raise EmptyInputError(
-            "Sender wallet address (from_wallet) must not be empty.",
-            code=ErrorCode.EMPTY_INPUT,
-        )
-    try:
-        return validate_wallet_address(from_wallet)
-    except AddressValidationError as exc:
-        raise AddressValidationError(
-            f"Invalid Ethereum wallet address for sender (from_wallet): {exc.message}",
-            code=exc.code,
-        ) from exc
-
-
-def validate_recipient_address(to: str) -> str:
-    """Validate the recipient (``to``) Ethereum address and return its EIP-55 checksum."""
-    if not isinstance(to, str) or not to.strip():
-        raise EmptyInputError(
-            "Recipient wallet address (to) must not be empty.",
-            code=ErrorCode.EMPTY_INPUT,
-        )
-    try:
-        return validate_wallet_address(to)
-    except AddressValidationError as exc:
-        raise AddressValidationError(
-            f"Invalid Ethereum wallet address for recipient (to): {exc.message}",
-            code=exc.code,
-        ) from exc
-
-
-def get_max_tx_amount() -> Decimal:
-    """Resolve and validate the maximum allowed token quantity per transaction."""
-    raw_limit = os.getenv(MAX_TX_AMOUNT_ENV_VAR, "").strip()
-    if not raw_limit:
-        return DEFAULT_MAX_TOKEN_AMOUNT
-
-    try:
-        limit_dec = Decimal(raw_limit)
-    except InvalidOperation as exc:
-        raise ConfigurationError(
-            f"Invalid {MAX_TX_AMOUNT_ENV_VAR} configuration: {redact_text(raw_limit)!r} is not a valid decimal.",
-            code=ErrorCode.INVALID_CONFIGURATION,
-        ) from exc
-
-    if not limit_dec.is_finite() or limit_dec <= Decimal(0):
-        raise ConfigurationError(
-            f"Invalid {MAX_TX_AMOUNT_ENV_VAR} configuration: must be a positive finite number.",
-            code=ErrorCode.INVALID_CONFIGURATION,
-        )
-
-    return limit_dec
-
-
-def get_approved_tickers() -> frozenset[str] | None:
-    """Resolve optional comma-separated approved ticker policy from environment configuration."""
-    raw_tickers = os.getenv(APPROVED_TICKERS_ENV_VAR, "").strip()
-    if not raw_tickers:
-        return None
-
-    items = [part.strip().lower() for part in raw_tickers.split(",") if part.strip()]
-    if not items:
-        raise ConfigurationError(
-            f"Invalid {APPROVED_TICKERS_ENV_VAR} configuration: must contain at least one ticker.",
-            code=ErrorCode.INVALID_CONFIGURATION,
-        )
-    return frozenset(items)
-
-
-def get_allowed_recipients() -> frozenset[str] | None:
-    """Resolve optional comma-separated recipient address allowlist from environment configuration."""
-    raw_recipients = os.getenv(ALLOWED_RECIPIENTS_ENV_VAR, "").strip()
-    if not raw_recipients:
-        return None
-
-    parts = [part.strip() for part in raw_recipients.split(",") if part.strip()]
-    if not parts:
-        raise ConfigurationError(
-            f"Invalid {ALLOWED_RECIPIENTS_ENV_VAR} configuration: allowlist must not be empty.",
-            code=ErrorCode.INVALID_CONFIGURATION,
-        )
-
-    checksummed: set[str] = set()
-    for part in parts:
-        try:
-            checksummed.add(validate_wallet_address(part))
-        except ValueError as exc:
-            raise ConfigurationError(
-                f"Invalid address in {ALLOWED_RECIPIENTS_ENV_VAR} configuration: {redact_text(str(exc))}",
-                code=ErrorCode.INVALID_CONFIGURATION,
-            ) from exc
-
-    return frozenset(checksummed)
 
 
 def get_intent_ttl_seconds() -> int:
@@ -519,14 +443,21 @@ def verify_prepared_transaction_intent(
 
     checksum_sender = validate_sender_address(str(intent.get("from_wallet", "")))
     checksum_recipient = validate_recipient_address(str(intent.get("to", "")))
+    canonical_intent_ticker = validate_approved_ticker(str(intent.get("ticker", "")))
     checksum_contract = validate_contract_address(
         str(intent.get("token_address", "")),
-        ticker=str(intent.get("ticker", "stock")),
+        ticker=canonical_intent_ticker,
     )
     if checksum_contract is None:
         raise ConfigurationError(
             "Missing required configuration: token_address is missing in transaction intent.",
             code=ErrorCode.MISSING_CONFIGURATION,
+        )
+    if checksum_recipient == checksum_contract:
+        raise PolicyViolationError(
+            f"Policy rejection: recipient address ({checksum_recipient}) cannot be "
+            f"the {canonical_intent_ticker} token contract address ({checksum_contract}).",
+            code=ErrorCode.POLICY_REJECTED,
         )
 
     raw_tx_from = unsigned_tx.get("from")
@@ -642,19 +573,8 @@ def verify_prepared_transaction_intent(
 
 def _resolve_stock_and_contract(ticker: str) -> dict[str, Any]:
     """Validate and resolve the requested ticker and its configured token contract from the dataset."""
-    if not isinstance(ticker, str) or not ticker.strip():
-        raise EmptyInputError(
-            "Ticker must not be empty.",
-            code=ErrorCode.EMPTY_INPUT,
-        )
-
+    approved_canonical_ticker = validate_approved_ticker(ticker)
     normalized_ticker = ticker.strip()
-    approved_tickers = get_approved_tickers()
-    if approved_tickers is not None and normalized_ticker.lower() not in approved_tickers:
-        raise PolicyViolationError(
-            f"Policy rejection: ticker {redact_text(normalized_ticker)} is not in the approved ticker set.",
-            code=ErrorCode.POLICY_REJECTED,
-        )
 
     stocks = load_stocks()
     if not isinstance(stocks, list):
@@ -709,7 +629,7 @@ def _resolve_stock_and_contract(ticker: str) -> dict[str, Any]:
                 )
             seen_addresses[checksum_addr] = rec_ticker
 
-        if rec_lower == normalized_ticker.lower():
+        if rec_lower == approved_canonical_ticker.lower():
             matched_record = dict(record)
             matched_record["_checksum_token_address"] = checksum_addr
 
@@ -719,7 +639,7 @@ def _resolve_stock_and_contract(ticker: str) -> dict[str, Any]:
             code=ErrorCode.TICKER_NOT_FOUND,
         )
 
-    canonical_ticker = str(matched_record["ticker"]).strip()
+    canonical_ticker = validate_approved_ticker(str(matched_record["ticker"]).strip())
     configured_decimals = matched_record.get("decimals")
     if configured_decimals is not None:
         if (
@@ -948,6 +868,92 @@ def _build_unsigned_transfer_envelope(
     return unsigned_tx
 
 
+def _enforce_pre_rpc_transaction_policy(
+    from_wallet: str,
+    ticker: str,
+    to: str,
+    amount: int | float | str | Decimal,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Evaluate all deterministic input, dataset, and safety policy rules before any RPC call."""
+    max_amount: Decimal | None = None
+    approved_tickers: tuple[str, ...] | None = None
+    try:
+        checksum_sender = validate_sender_address(from_wallet)
+        checksum_recipient = validate_recipient_address(to)
+        max_amount = get_max_tx_amount()
+        approved_tickers = get_approved_tickers_canonical()
+        allowed_recipients = get_allowed_recipients()
+        ttl_seconds = get_intent_ttl_seconds()
+
+        # Preliminary fail-fast amount & policy validation before dataset/RPC calls
+        validate_token_amount(
+            amount,
+            decimals=MAX_TOKEN_DECIMALS,
+            max_amount=max_amount,
+        )
+    except ValueError as exc:
+        return None, build_policy_rejection_response(
+            exc,
+            ticker=ticker,
+            amount=amount,
+            max_amount=max_amount,
+            approved_tickers=approved_tickers,
+        )
+
+    try:
+        stock_meta = _resolve_stock_and_contract(ticker)
+    except FileNotFoundError:
+        raise
+    except ValueError as exc:
+        return None, build_policy_rejection_response(
+            exc,
+            ticker=ticker,
+            amount=amount,
+            max_amount=max_amount,
+            approved_tickers=approved_tickers,
+        )
+
+    canonical_ticker: str = stock_meta["ticker"]
+    checksum_token_address: str = stock_meta["token_address"]
+    configured_decimals: int | None = stock_meta["configured_decimals"]
+
+    policy_decision = evaluate_transaction_policy(
+        ticker=canonical_ticker,
+        amount=amount,
+        from_wallet=checksum_sender,
+        to=checksum_recipient,
+        token_address=checksum_token_address,
+        decimals=(
+            configured_decimals
+            if configured_decimals is not None
+            else MAX_TOKEN_DECIMALS
+        ),
+        require_addresses=True,
+        require_contract=True,
+        audit=False,
+    )
+    if not policy_decision.allowed:
+        return None, policy_decision.to_error_response()
+
+    return (
+        {
+            "checksum_sender": checksum_sender,
+            "checksum_recipient": checksum_recipient,
+            "max_amount": max_amount,
+            "approved_tickers": approved_tickers,
+            "allowed_recipients": allowed_recipients,
+            "ttl_seconds": ttl_seconds,
+            "stock_meta": stock_meta,
+        },
+        None,
+    )
+
+
+@audit_tool_call(
+    "prepare_transaction",
+    reraise_exceptions=(FileNotFoundError,),
+    fail_closed=True,
+)
 def prepare_transaction(
     from_wallet: str,
     ticker: str,
@@ -976,28 +982,29 @@ def prepare_transaction(
         A structured unsigned transaction intent dictionary with ``signed: False``,
         or ``{"error": "..."}`` when validation, policy, or RPC checks fail.
     """
-    try:
-        checksum_sender = validate_sender_address(from_wallet)
-        checksum_recipient = validate_recipient_address(to)
-        max_amount = get_max_tx_amount()
-        allowed_recipients = get_allowed_recipients()
-        ttl_seconds = get_intent_ttl_seconds()
-
-        # Preliminary fail-fast amount validation before dataset/RPC calls
-        validate_token_amount(
-            amount,
-            decimals=MAX_TOKEN_DECIMALS,
-            max_amount=max_amount,
+    pre_rpc_ctx, rejection_response = _enforce_pre_rpc_transaction_policy(
+        from_wallet=from_wallet,
+        ticker=ticker,
+        to=to,
+        amount=amount,
+    )
+    if rejection_response is not None or pre_rpc_ctx is None:
+        return (
+            rejection_response
+            if rejection_response is not None
+            else build_policy_rejection_response(
+                "Policy rejection: transaction request denied by safety policy.",
+                ticker=ticker,
+                amount=amount,
+            )
         )
-    except ValueError as exc:
-        return {"error": redact_text(str(exc))}
 
-    try:
-        stock_meta = _resolve_stock_and_contract(ticker)
-    except FileNotFoundError:
-        raise
-    except ValueError as exc:
-        return {"error": redact_text(str(exc))}
+    checksum_sender: str = pre_rpc_ctx["checksum_sender"]
+    checksum_recipient: str = pre_rpc_ctx["checksum_recipient"]
+    max_amount: Decimal = pre_rpc_ctx["max_amount"]
+    approved_tickers: tuple[str, ...] = pre_rpc_ctx["approved_tickers"]
+    ttl_seconds: int = pre_rpc_ctx["ttl_seconds"]
+    stock_meta: dict[str, Any] = pre_rpc_ctx["stock_meta"]
 
     canonical_ticker: str = stock_meta["ticker"]
     stock_name: str = stock_meta["stock"]
@@ -1006,38 +1013,28 @@ def prepare_transaction(
     environment: str = stock_meta["environment"]
 
     try:
-        if checksum_recipient == checksum_token_address:
-            raise PolicyViolationError(
-                f"Policy rejection: recipient address ({checksum_recipient}) cannot be "
-                f"the {canonical_ticker} token contract address ({checksum_token_address}).",
-                code=ErrorCode.POLICY_REJECTED,
-            )
-
-        if allowed_recipients is not None and checksum_recipient not in allowed_recipients:
-            raise PolicyViolationError(
-                f"Policy rejection: recipient address {checksum_recipient} is not in the "
-                f"configured recipient allowlist.",
-                code=ErrorCode.POLICY_REJECTED,
-            )
-
-        if configured_decimals is not None:
-            validate_token_amount(
-                amount,
-                decimals=configured_decimals,
-                max_amount=max_amount,
-            )
-    except ValueError as exc:
-        return {"error": redact_text(str(exc))}
-
-    try:
         w3 = get_web3()
         chain_id = verify_base_sepolia_connection(w3)
     except (KyroxError, ConnectionError, TimeoutError, ValueError) as exc:
-        return {"error": redact_text(str(exc))}
+        return build_policy_rejection_response(
+            exc,
+            ticker=canonical_ticker,
+            amount=amount,
+            max_amount=max_amount,
+            approved_tickers=approved_tickers,
+            chain_verified=not isinstance(exc, ChainIdMismatchError),
+            ticker_approved=True,
+        )
     except Exception as exc:
-        return {
-            "error": f"Unable to connect to Base Sepolia RPC provider: {redact_text(str(exc))}"
-        }
+        return build_policy_rejection_response(
+            f"Unable to connect to Base Sepolia RPC provider: {redact_text(str(exc))}",
+            ticker=canonical_ticker,
+            amount=amount,
+            max_amount=max_amount,
+            approved_tickers=approved_tickers,
+            chain_verified=False,
+            ticker_approved=True,
+        )
 
     try:
         _verify_contract_bytecode(w3, checksum_token_address, canonical_ticker)
@@ -1091,7 +1088,14 @@ def prepare_transaction(
             skip_rpc_fee_defaults=_skip_rpc_fee_defaults,
         )
     except (KyroxError, ConnectionError, TimeoutError, ValueError) as exc:
-        return {"error": redact_text(str(exc))}
+        return build_policy_rejection_response(
+            exc,
+            ticker=canonical_ticker,
+            amount=amount,
+            max_amount=max_amount,
+            approved_tickers=approved_tickers,
+            ticker_approved=True,
+        )
     except Exception as exc:
         safe_exc = redact_text(str(exc))
         if is_timeout_exception(exc):
@@ -1099,12 +1103,26 @@ def prepare_transaction(
                 f"Failed to build transfer transaction for {canonical_ticker} "
                 f"at {checksum_token_address} (request timed out): {safe_exc}"
             )
-            return {"error": err.message}
+            return build_policy_rejection_response(
+                err,
+                ticker=canonical_ticker,
+                amount=amount,
+                max_amount=max_amount,
+                approved_tickers=approved_tickers,
+                ticker_approved=True,
+            )
         contract_err = ContractCallError(
             f"Failed to build transfer transaction for {canonical_ticker} "
             f"at {checksum_token_address}: {safe_exc}"
         )
-        return {"error": contract_err.message}
+        return build_policy_rejection_response(
+            contract_err,
+            ticker=canonical_ticker,
+            amount=amount,
+            max_amount=max_amount,
+            approved_tickers=approved_tickers,
+            ticker_approved=True,
+        )
 
     amount_decimal_str = format_decimal_str(amount_dec)
     human_amount = _decimal_to_json_number(amount_dec)
@@ -1168,13 +1186,21 @@ def prepare_transaction(
         "unsigned_tx": unsigned_tx,
         "policy": {
             "passed": True,
+            "allowed": True,
+            "requires_human_approval": True,
             "chain_verified": True,
             "allowed_chain_id": BASE_SEPOLIA_CHAIN_ID,
+            "ticker": canonical_ticker,
             "ticker_approved": True,
+            "allowed_tickers": list(approved_tickers),
             "contract_verified": True,
             "recipient_allowed": True,
+            "amount_decimal": amount_decimal_str,
             "max_amount": format_decimal_str(max_amount),
-            "requires_human_approval": True,
+            "reasons": [],
+            "error_code": None,
+            "error_category": None,
+            "policy_version": POLICY_VERSION,
         },
         "instructions": EXTERNAL_SIGNING_INSTRUCTIONS,
         "next_steps": [
@@ -1762,7 +1788,15 @@ def simulate_prepared_transaction_intent(
     try:
         verified = verify_prepared_transaction_intent(intent, now=now)
     except (KyroxError, ValueError) as exc:
-        return {"error": redact_text(str(exc))}
+        intent_ticker = intent.get("ticker") if isinstance(intent, Mapping) else None
+        intent_amount = (
+            intent.get("amount_decimal") if isinstance(intent, Mapping) else None
+        )
+        return build_policy_rejection_response(
+            exc,
+            ticker=intent_ticker,
+            amount=intent_amount,
+        )
 
     checksum_contract = str(verified["token_address"])
     ticker = str(verified["ticker"])
@@ -1776,11 +1810,21 @@ def simulate_prepared_transaction_intent(
         snapshot_block_number = _fetch_canonical_block_number(active_w3)
         sim_tx = build_simulation_call_object(verified)
     except (KyroxError, ConnectionError, TimeoutError, ValueError) as exc:
-        return {"error": redact_text(str(exc))}
+        return build_policy_rejection_response(
+            exc,
+            ticker=ticker,
+            amount=amount_decimal,
+            chain_verified=not isinstance(exc, ChainIdMismatchError),
+            ticker_approved=True,
+        )
     except Exception as exc:
-        return {
-            "error": f"Unable to connect to Base Sepolia RPC provider: {redact_text(str(exc))}"
-        }
+        return build_policy_rejection_response(
+            f"Unable to connect to Base Sepolia RPC provider: {redact_text(str(exc))}",
+            ticker=ticker,
+            amount=amount_decimal,
+            chain_verified=False,
+            ticker_approved=True,
+        )
 
     # Step 1: EVM dry-run execution check via eth_call pinned to snapshot_block_number
     try:
@@ -1806,7 +1850,12 @@ def simulate_prepared_transaction_intent(
                 )
             )
         except (KyroxError, ConnectionError, TimeoutError, ValueError) as rpc_exc:
-            return {"error": redact_text(str(rpc_exc))}
+            return build_policy_rejection_response(
+                rpc_exc,
+                ticker=ticker,
+                amount=amount_decimal,
+                ticker_approved=True,
+            )
 
         return _build_simulation_result_envelope(
             verified,
@@ -1878,7 +1927,12 @@ def simulate_prepared_transaction_intent(
                 )
             )
         except (KyroxError, ConnectionError, TimeoutError, ValueError) as rpc_exc:
-            return {"error": redact_text(str(rpc_exc))}
+            return build_policy_rejection_response(
+                rpc_exc,
+                ticker=ticker,
+                amount=amount_decimal,
+                ticker_approved=True,
+            )
 
         return _build_simulation_result_envelope(
             verified,
@@ -1911,6 +1965,11 @@ def simulate_prepared_transaction_intent(
     )
 
 
+@audit_tool_call(
+    "simulate_transaction",
+    reraise_exceptions=(FileNotFoundError,),
+    fail_closed=True,
+)
 def simulate_transaction(
     from_wallet: str,
     ticker: str,
@@ -1919,14 +1978,30 @@ def simulate_transaction(
 ) -> dict[str, Any]:
     """Prepare and dry-run an unsigned ERC-20 transfer transaction on Base Sepolia.
 
-    Reuses ``prepare_transaction`` so all sender/recipient/contract validations,
-    decimal precision checks, Base Sepolia chain ID (``84532``) enforcement, and
-    transaction policy limits execute before any RPC simulation call takes place.
-    When preparation succeeds, verifies the unsigned intent and executes ``eth_call``
-    and ``eth_estimateGas`` against Base Sepolia block ``"latest"``.
+    Independently enforces the Day 11 transaction safety policy before any transaction
+    preparation, calldata construction, or RPC simulation call takes place. When
+    pre-RPC policy checks pass, prepares and verifies the unsigned intent and executes
+    ``eth_call`` and ``eth_estimateGas`` against a pinned Base Sepolia block snapshot.
 
     This function NEVER accepts private keys, NEVER signs, and NEVER broadcasts.
     """
+    pre_rpc_ctx, rejection_response = _enforce_pre_rpc_transaction_policy(
+        from_wallet=from_wallet,
+        ticker=ticker,
+        to=to,
+        amount=amount,
+    )
+    if rejection_response is not None or pre_rpc_ctx is None:
+        return (
+            rejection_response
+            if rejection_response is not None
+            else build_policy_rejection_response(
+                "Policy rejection: transaction request denied by safety policy.",
+                ticker=ticker,
+                amount=amount,
+            )
+        )
+
     prepared = prepare_transaction(
         from_wallet=from_wallet,
         ticker=ticker,
@@ -1935,9 +2010,15 @@ def simulate_transaction(
         _skip_rpc_fee_defaults=True,
     )
     if not isinstance(prepared, Mapping) or "error" in prepared:
-        return dict(prepared) if isinstance(prepared, Mapping) else {
-            "error": "Failed to prepare transaction intent for simulation."
-        }
+        return (
+            dict(prepared)
+            if isinstance(prepared, Mapping)
+            else build_policy_rejection_response(
+                "Failed to prepare transaction intent for simulation.",
+                ticker=ticker,
+                amount=amount,
+            )
+        )
 
     return simulate_prepared_transaction_intent(prepared)
 
@@ -1948,6 +2029,8 @@ __all__ = [
     "BASE_SEPOLIA_CHAIN_ID",
     "BASE_SEPOLIA_CHAIN_ID_HEX",
     "BASE_SEPOLIA_CHAIN_NAME",
+    "CANONICAL_APPROVED_TICKERS",
+    "DEFAULT_APPROVED_TICKERS",
     "DEFAULT_INTENT_TTL_SECONDS",
     "ERC20_INSUFFICIENT_BALANCE_SELECTOR",
     "ERC20_TRANSFER_ABI",
@@ -1955,26 +2038,36 @@ __all__ = [
     "EXTERNAL_SIGNING_INSTRUCTIONS",
     "FORBIDDEN_SIMULATION_CALL_KEYS",
     "GAS_ESTIMATE_WARNING",
+    "HARD_MAX_TOKEN_AMOUNT",
     "INTENT_TTL_ENV_VAR",
     "MAX_GAS_ESTIMATE_UNITS",
+    "MAX_TOKEN_AMOUNT_ENV_VAR",
     "MAX_TX_AMOUNT_ENV_VAR",
     "NONCE_SNAPSHOT_NOTE",
+    "POLICY_VERSION",
     "PREPARATION_EXECUTION_WARNING",
+    "PolicyDecision",
     "SIMULATION_BLOCK_IDENTIFIER",
     "SIMULATION_CALL_ALLOWED_KEYS",
     "SIMULATION_SIGNING_INSTRUCTIONS",
     "SIMULATION_STATE_WARNING",
+    "build_policy_rejection_response",
     "build_simulation_call_object",
+    "check_policy",
     "compute_intent_hash",
     "decode_erc20_transfer_calldata",
     "encode_erc20_transfer_calldata",
+    "evaluate_transaction_policy",
     "get_allowed_recipients",
     "get_approved_tickers",
+    "get_approved_tickers_canonical",
     "get_intent_ttl_seconds",
+    "get_max_token_amount",
     "get_max_tx_amount",
     "prepare_transaction",
     "simulate_prepared_transaction_intent",
     "simulate_transaction",
+    "validate_approved_ticker",
     "validate_recipient_address",
     "validate_sender_address",
     "verify_prepared_transaction_intent",
