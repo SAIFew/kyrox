@@ -21,7 +21,7 @@ from typing import Any
 REDACTED_PLACEHOLDER: str = "[REDACTED]"
 MAX_REDACTION_DEPTH: int = 32
 MAX_TOKEN_DECIMALS: int = 77
-DEFAULT_MAX_TOKEN_AMOUNT: Decimal = Decimal("1000000000")  # 1 billion tokens
+DEFAULT_MAX_TOKEN_AMOUNT: Decimal = Decimal("50")  # 50 tokens per transaction default policy limit
 
 # Public blockchain metadata field names that contain "token" or "key" but are NOT secrets.
 # Their values are still scanned by pattern-based value redaction.
@@ -39,6 +39,7 @@ SAFE_PUBLIC_FIELD_NAMES: frozenset[str] = frozenset(
         "token_configs",
         "tokens",
         "configured_tokens",
+        "max_token_amount",
         "public_key",
         "public_address",
         "wallet",
@@ -82,6 +83,7 @@ SAFE_PUBLIC_FIELD_NAMES: frozenset[str] = frozenset(
         "amount_decimal",
         "amount_base_units",
         "raw_amount",
+        "normalized_amount",
         "chain_id_hex",
         "data",
         "calldata",
@@ -110,13 +112,21 @@ SAFE_PUBLIC_FIELD_NAMES: frozenset[str] = frozenset(
         "requires_external_signature",
         "signing_mode",
         "policy",
+        "policy_decision",
+        "policy_version",
+        "decision",
         "passed",
+        "allowed",
+        "allowed_tickers",
+        "reasons",
+        "denial_reasons",
         "chain_verified",
         "allowed_chain_id",
         "ticker_approved",
         "contract_verified",
         "recipient_allowed",
         "max_amount",
+        "effective_max_amount",
         "next_steps",
         "instructions",
         "status",
@@ -648,6 +658,13 @@ class Erc20FalseReturnError(ContractCallError):
     default_category = "simulation"
 
 
+class AuditLogError(KyroxError, OSError):
+    """Raised when audit logging fails during a fail-closed high-impact operation."""
+
+    default_code = ErrorCode.INTERNAL_ERROR
+    default_category = "audit"
+
+
 def is_timeout_exception(exc: BaseException) -> bool:
     """Return ``True`` if ``exc`` represents a network or RPC timeout."""
     if isinstance(exc, TimeoutError):
@@ -668,10 +685,13 @@ def classify_error_message(
     safe_msg = redact_text(str(message))
     lower = safe_msg.lower()
 
-    if "must not be empty" in lower or "cannot be empty" in lower:
+    if "audit logging failed" in lower:
+        code = ErrorCode.INTERNAL_ERROR
+        category = "audit"
+    elif "must not be empty" in lower or "cannot be empty" in lower:
         code = ErrorCode.EMPTY_INPUT
         category = "validation"
-    elif "not found" in lower and "ticker" in lower:
+    elif "not found" in lower and "ticker" in lower and "policy rejection" not in lower:
         code = ErrorCode.TICKER_NOT_FOUND
         category = "not_found"
     elif "stock data file not found" in lower:
