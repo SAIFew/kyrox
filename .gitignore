@@ -10,6 +10,14 @@ __pycache__/
 .coverage
 htmlcov/
 test-results/
+/build/
+/dist/
+*.egg-info/
+.eggs/
+/wheelhouse/
+*.tmp
+*.bak
+*.local.json
 *.py[cod]
 .DS_Store
 Thumbs.db

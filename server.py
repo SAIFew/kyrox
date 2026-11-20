@@ -21,7 +21,10 @@ from tools.tx import (
 )
 from tools.wallet import get_balances, get_portfolio as _get_wallet_portfolio
 
+__version__: str = "0.1.0"
+
 mcp = FastMCP("KYROX")
+mcp._mcp_server.version = __version__
 
 READ_ONLY_LOCAL_ANNOTATIONS = ToolAnnotations(
     readOnlyHint=True,
