@@ -560,6 +560,51 @@ All tests isolate audit logs into temporary `pytest` directories (`tests/conftes
 
 ---
 
-## 19. License
+## 19. Early Tester Programme, Bug Reporting & Contribution Rewards
+
+KYROX is opening its **Early Tester Programme** (Chapter 1, Day 13) to a small group of **five external builders** who want to connect KYROX (`kyrox-mcp`) to their AI agent workflows, test its 7 MCP tools and safety policy engine on Base Sepolia, and report reproducible bugs before wider release.
+
+### Who Should Apply
+
+- Developers building **AI agents**, **MCP client integrations** (Claude Desktop, Antigravity, MCP Inspector, or custom STDIO hosts), or **on-chain financial copilot workflows** on Base.
+- Builders willing to test read-only stock/portfolio queries (`list_stocks`, `get_stock_info`, `get_wallet_balances`, `get_portfolio`), unsigned transaction preparation (`prepare_transaction`), and pinned-block EVM dry runs (`simulate_transaction`), and provide actionable engineering feedback.
+
+### Early Tester Registration Form (`KYROX — Early Tester Application`)
+
+- **Registration Form Status:** `PENDING_OWNER_FORM_PUBLICATION` — The external Tally / Google Forms registration link (`KYROX — Early Tester Application`) requires manual publication in an authenticated browser session by the project owner. No placeholder or fabricated form URL is published here; this section will be updated with the verified live form URL immediately upon owner publication.
+- **Information Collected on Registration:**
+  1. **Name** *(required)*
+  2. **X handle** *(required — with or without `@`)*
+  3. **Base Sepolia wallet address** *(required — public receiving address only on Base Sepolia `chainId: 84532`, starting with `0x` followed by 40 hexadecimal characters; never submit private keys or seed phrases)*
+  4. **What AI agent are you building?** *(required — agent framework, use case, and what you intend to test with KYROX)*
+  5. **Testnet & Security Consent** *(required — confirming understanding that this is a Base Sepolia testnet-only programme, mock stock tokens have no monetary value, and no private keys, seed phrases, or passwords will ever be submitted)*
+
+### How to Report Bugs & Security Issues
+
+- **Reproducible Non-Security Bugs:** Use the official GitHub Bug Report issue form defined in [.github/ISSUE_TEMPLATE/bug_report.yml](.github/ISSUE_TEMPLATE/bug_report.yml) (`https://github.com/SAIFew/kyrox-mcp/issues/new?template=bug_report.yml` once GitHub Issues is enabled on the repository and the template is merged into the default `main` branch). Include your KYROX version/commit, environment (`Local installation`, `Base Sepolia`, or `Other, with explanation`), numbered reproduction steps, expected vs. actual behaviour, and redacted logs.
+- **Security Vulnerabilities:** Do **not** post public exploit details in a GitHub Issue. Disclose security vulnerabilities privately via **GitHub Private Vulnerability Reporting** (`Security -> Advisories -> Report a vulnerability`) in accordance with [SECURITY.md](SECURITY.md).
+- **Mandatory Secret Hygiene:** Never upload private keys, recovery/seed phrases, `.env` files, wallet passwords, or live API credentials in any bug report, screenshot, or log snippet.
+
+### Contribution Rewards & Planned Early Builder Badge (`BOUNTY.md`)
+
+See [BOUNTY.md](BOUNTY.md) for the complete reward rules, qualification criteria, funding disclosures, and planned Early Builder badge status:
+
+- **Active Day 13 Categories:**
+  - **Bug Bounty:** `$10–$50 USDC` per confirmed, reproducible bug (final severity and award within the `$10–$50` range determined by the maintainer with a clear explanation).
+  - **First Integrations:** `$25 USDC` for each of the first 6 qualifying, independently verifiable AI agent integrations with a genuine screen recording (`$150 USDC` maximum planned allocation).
+- **Future Categories (Not Active on Day 13):**
+  - **Feature Idea That Ships:** `$50 USDC` + Feature Drop attribution *(starts Day 14 — November 21, 2026)*.
+  - **Community Challenge:** `$150 USDC` split across the top 3 contributions *(starts Chapter 2, Week 2)*.
+- **Planned Early Builder Badge:** Free, non-transferable onchain recognition badge planned on Base for verified testers, bug reporters, and integrators (*currently `PLANNED / PENDING DEPLOYMENT` — no badge contract is deployed in `contracts/`, not a financial token, and carries zero promise or hint of future token conversion or airdrops*).
+
+### Base Sepolia Testnet-Only Warning & Asset Distinction
+
+> **Critical Distinction — Mock Stock Tokens vs. USDC Contribution Rewards:**
+> 1. **Testnet Mock Stock Tokens (`tAAPL`, `tTSLA`, `tNVDA`):** Exist solely on **Base Sepolia testnet (`chainId: 84532`)** via [contracts/MockStock.sol](contracts/MockStock.sol) for functional testing of KYROX MCP tools. They have **zero monetary value**, do not represent real equities, and are currently awaiting manual owner deployment (`token_address: ""` in packaged [data/stocks.json](data/stocks.json)).
+> 2. **USDC Contribution Rewards ([BOUNTY.md](BOUNTY.md)):** Are separate off-protocol contribution incentives subject to independent maintainer verification, owner confirmation of reward funding and payout network (the original playbook suggests a `$400 USDC` pool across Chapter 1 and early Chapter 2 without confirming escrow or payout network), and appropriate tax and legal review prior to distribution.
+
+---
+
+## 20. License
 
 Licensed under the **Apache License, Version 2.0** (`Apache-2.0`). See the [LICENSE](LICENSE) file for the full license text.
