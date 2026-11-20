@@ -11,4 +11,5 @@ Implemented modules (v0.1):
 
 from __future__ import annotations
 
-__all__: list[str] = ["errors", "log", "policy", "stocks", "tx", "wallet"]
+__version__: str = "0.1.0"
+__all__: list[str] = ["__version__", "errors", "log", "policy", "stocks", "tx", "wallet"]

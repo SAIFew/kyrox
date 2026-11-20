@@ -210,6 +210,7 @@ def test_stdio_protocol_framing_and_clean_stdout(tmp_path: Path) -> None:
 
     assert 1 in parsed_messages
     assert parsed_messages[1]["result"]["serverInfo"]["name"] == "KYROX"
+    assert parsed_messages[1]["result"]["serverInfo"]["version"] == "0.1.0"
 
     assert 2 in parsed_messages
     listed_tools = {t["name"] for t in parsed_messages[2]["result"]["tools"]}
@@ -258,4 +259,113 @@ def test_stdio_protocol_framing_and_clean_stdout(tmp_path: Path) -> None:
     assert "exceeds maximum allowed limit (50)" in sim_policy_err["error"]
     assert sim_policy_err["requires_human_approval"] is True
     assert sim_policy_err["policy"]["allowed"] is False
+
+
+def test_stdio_server_runs_from_external_working_directory(tmp_path: Path) -> None:
+    """Verify server.py starts and serves packaged stock data when cwd is outside the repo root."""
+    external_cwd = tmp_path / "external_workdir"
+    external_cwd.mkdir(parents=True, exist_ok=True)
+    env = dict(os.environ)
+    env["KYROX_LOG_DIR"] = str(tmp_path / "external_stdio_logs")
+
+    requests_lines = [
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "kyrox-external-cwd-test", "version": "0.1.0"},
+                },
+            }
+        ),
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized",
+            }
+        ),
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/list",
+                "params": {},
+            }
+        ),
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {
+                    "name": "hello_kyrox",
+                    "arguments": {"name": "Developer"},
+                },
+            }
+        ),
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "tools/call",
+                "params": {
+                    "name": "list_stocks",
+                    "arguments": {},
+                },
+            }
+        ),
+    ]
+
+    proc = subprocess.Popen(
+        [sys.executable, str(PROJECT_ROOT / "server.py")],
+        cwd=str(external_cwd),
+        env=env,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+    )
+
+    parsed_messages: dict[int, dict[str, Any]] = {}
+    try:
+        assert proc.stdin is not None
+        assert proc.stdout is not None
+        for raw_line in requests_lines:
+            proc.stdin.write(raw_line + "\n")
+            proc.stdin.flush()
+            msg_obj = json.loads(raw_line)
+            if "id" in msg_obj:
+                resp_line = proc.stdout.readline().strip()
+                assert resp_line
+                msg = json.loads(resp_line)
+                assert msg.get("jsonrpc") == "2.0"
+                parsed_messages[int(msg["id"])] = msg
+        proc.stdin.close()
+        proc.wait(timeout=10)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+
+    assert parsed_messages[1]["result"]["serverInfo"] == {
+        "name": "KYROX",
+        "version": "0.1.0",
+    }
+    tools_list = parsed_messages[2]["result"]["tools"]
+    assert len(tools_list) == 7
+    for tool_entry in tools_list:
+        assert "inputSchema" in tool_entry
+        assert tool_entry["inputSchema"]["type"] == "object"
+
+    greeting_text = parsed_messages[3]["result"]["content"][0]["text"]
+    assert greeting_text == "Hello Developer, KYROX is live."
+
+    stocks_content = parsed_messages[4]["result"]["content"]
+    assert len(stocks_content) == 3
+    first_stock = json.loads(stocks_content[0]["text"])
+    assert first_stock["ticker"] == "tAAPL"
+    assert first_stock["reference_value"] == 230.0
 
