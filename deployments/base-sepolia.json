@@ -1,0 +1,13 @@
+{
+  "chainId": 84532,
+  "chain": "base-sepolia",
+  "status": "unpopulated",
+  "contracts": {},
+  "feeds": {},
+  "notes": [
+    "Phase 0 placeholder. No contracts are deployed.",
+    "Populate only with addresses verified on Base Sepolia (chainId 84532).",
+    "Never place a Base Mainnet address in this file.",
+    "Addresses are added only after an approved deployment and verification step."
+  ]
+}

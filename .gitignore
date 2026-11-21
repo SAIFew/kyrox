@@ -1,0 +1,42 @@
+# Dependencies and build output
+node_modules/
+.next/
+dist/
+out/
+build/
+coverage/
+*.tsbuildinfo
+.turbo/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+secrets/
+*.local.json
+
+# Tooling caches
+.eslintcache
+.prettiercache
+.vitest/
+.vercel/
+
+# Foundry
+packages/contracts/lib/
+packages/contracts/out/
+packages/contracts/cache/
+packages/contracts/broadcast/
+packages/contracts/wallet/
+
+# Logs and OS files
+*.log
+logs/
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
