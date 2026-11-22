@@ -5,7 +5,7 @@ Unified monorepo for the **KYROX** Base Sepolia testnet platform: consumer web a
 > **Current Status (Base Sepolia Testnet Only — `chainId: 84532`):**
 >
 > - **TypeScript Application & Foundry Contracts:** Phase 1 complete locally; consumer vertical slice running on local Anvil + PostgreSQL (`304` unit and cross-surface invariant tests + `11` PostgreSQL/Anvil integration tests + `92` Foundry contract tests passing). No Base Sepolia contract deployment and no live price publication exist yet (`deployments/base-sepolia.json` is `"status": "unpopulated"`).
-> - **Python MCP Server (`services/mcp-server`):** `v0.1.0` complete (`7` registered STDIO MCP tools, deterministic 50-token transfer policy gate, fail-closed redacted JSONL audit logging, installable wheel/sdist, and `401` automated pytest tests passing).
+> - **Python MCP Server (`services/mcp-server`):** `v0.1.0` complete (`7` registered STDIO MCP tools, deterministic 50-token transfer policy gate, fail-closed redacted JSONL audit logging, installable wheel/sdist, and `400` automated pytest tests passing).
 > - **Non-Custodial Boundary:** Testnet and local mock/Anvil fixtures only. No component holds private keys, signs transactions, broadcasts transactions, or supports real-money trading.
 
 ---
@@ -160,7 +160,7 @@ python -m pip install --upgrade pip build
 python -m pip install ".[dev]"
 python -m pip check
 
-# Run the 401-test pytest suite (including STDIO, packaging, and cross-surface invariant smoke tests)
+# Run the 400-test pytest suite (including STDIO, packaging, and cross-surface invariant smoke tests)
 python -m pytest -q
 
 # Build wheel and sdist and verify isolated wheel installation
@@ -229,7 +229,7 @@ bash scripts/with-postgres.sh bash -c '
 Every pull request and push to `main` runs six jobs:
 
 1. **JavaScript (`javascript`):** Node 24 + pnpm 12.21.0 frozen install, ESLint, Prettier check, TypeScript typecheck across all 9 packages, Vitest unit + cross-surface invariant tests, `@kyrox/web` production build, and `@kyrox/marketing` static export build.
-2. **Python MCP (`python`, matrix `3.11`, `3.12`, `3.13`):** Installs `services/mcp-server`, runs `pip check`, executes the 401-test `pytest` suite, builds wheel and sdist archives, installs the wheel into an isolated temporary virtual environment outside the repository, and runs a live STDIO JSON-RPC smoke test.
+2. **Python MCP (`python`, matrix `3.11`, `3.12`, `3.13`):** Installs `services/mcp-server`, runs `pip check`, executes the 400-test `pytest` suite, builds wheel and sdist archives, installs the wheel into an isolated temporary virtual environment outside the repository, and runs a live STDIO JSON-RPC smoke test.
 3. **Foundry Contracts (`contracts`):** Verifies contract sources exist, installs pinned OpenZeppelin (`v5.6.1`) and `forge-std` (`v1.17.0`), and runs `forge fmt --check`, `forge build --sizes`, and `forge test -vvv`.
 4. **Standalone Content (`content`):** Validates `content/kyrox-product-film` and `content/kyrox-motion` with `npm ci` + `tsc --noEmit`, and checks Python scripts and SVG/HTML assets in `content/day-5-carousel` and `content/day-6-architecture`.
 5. **PostgreSQL & Anvil Integration (`integration`):** Runs against a `postgres:16-alpine` service container and Foundry `anvil` to execute all 11 integration and E2E tests (`postgres.integration.test.ts`, `publication.e2e.test.ts`, and `e2e.anvil.test.ts`).

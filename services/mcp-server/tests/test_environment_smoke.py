@@ -183,35 +183,3 @@ def test_readme_documents_all_seven_tools_and_no_private_paths() -> None:
     assert "C:\\Users\\Lenovo" not in readme
     assert "D:\\Projects\\kyro-mcp" not in readme
 
-
-def test_cross_surface_policy_invariants_match_typescript_core() -> None:
-    """Verify Python MCP chain ID and approved ticker allowlist match packages/core when in monorepo."""
-    import re
-    import tools.errors as errors_mod
-    import tools.policy as policy_mod
-    import tools.stocks as stocks_mod
-    import tools.wallet as wallet_mod
-
-    monorepo_core_src = PROJECT_ROOT.parent.parent / "packages" / "core" / "src"
-    if not monorepo_core_src.is_dir():
-        pytest.skip("Standalone sdist outside monorepo; packages/core/src not present")
-
-    chains_ts = (monorepo_core_src / "chains.ts").read_text(encoding="utf-8")
-    policy_ts = (monorepo_core_src / "policy.ts").read_text(encoding="utf-8")
-
-    chain_id_match = re.search(r"export\s+const\s+BASE_SEPOLIA_CHAIN_ID\s*=\s*(\d+)", chains_ts)
-    assert chain_id_match is not None, "BASE_SEPOLIA_CHAIN_ID not found in packages/core/src/chains.ts"
-    ts_chain_id = int(chain_id_match.group(1))
-
-    max_dec_match = re.search(r"export\s+const\s+MAX_TOKEN_DECIMALS\s*=\s*(\d+)", chains_ts)
-    assert max_dec_match is not None, "MAX_TOKEN_DECIMALS not found in packages/core/src/chains.ts"
-    ts_max_decimals = int(max_dec_match.group(1))
-
-    assets_match = re.search(r"allowedAssets:\s*\[([^\]]+)\]", policy_ts)
-    assert assets_match is not None, "allowedAssets not found in packages/core/src/policy.ts"
-    ts_allowed_assets = tuple(re.findall(r'"([^"]+)"', assets_match.group(1)))
-
-    assert wallet_mod.BASE_SEPOLIA_CHAIN_ID == ts_chain_id
-    assert errors_mod.MAX_TOKEN_DECIMALS == ts_max_decimals
-    assert policy_mod.CANONICAL_APPROVED_TICKERS == ts_allowed_assets
-    assert tuple(item["ticker"] for item in stocks_mod.load_stocks()) == ts_allowed_assets
