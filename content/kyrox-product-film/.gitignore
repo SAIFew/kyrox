@@ -1,0 +1,6 @@
+node_modules/
+build/
+renders/**
+!renders/preview/
+!renders/preview/.gitkeep
+*.log

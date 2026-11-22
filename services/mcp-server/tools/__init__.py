@@ -1,0 +1,15 @@
+"""KYROX MCP tool package.
+
+Implemented modules (v0.1):
+- stocks.py (get_stock_info, list_stocks, schema validation, dataset cache)
+- wallet.py (get_wallet_balances, get_portfolio, Base Sepolia RPC & ERC-20 read validation)
+- policy.py (evaluate_transaction_policy, 50-token max default, approved ticker allowlist, human approval invariant & audit integration)
+- tx.py     (prepare_transaction, simulate_transaction, unsigned ERC-20 transfer intent builder, verification & EVM dry-run simulator)
+- log.py    (structured, redacted JSONL audit logging with size-based rotation and fail-closed transaction auditing)
+- errors.py (centralized error taxonomy, retryability, and secret redaction)
+"""
+
+from __future__ import annotations
+
+__version__: str = "0.1.0"
+__all__: list[str] = ["__version__", "errors", "log", "policy", "stocks", "tx", "wallet"]

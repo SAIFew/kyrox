@@ -1,0 +1,21 @@
+[
+  {
+    "ticker": "tAAPL",
+    "stock": "Test Apple",
+    "reference_value": 230.0,
+    "token_address": ""
+  },
+  {
+    "ticker": "tTSLA",
+    "stock": "Test Tesla",
+    "reference_value": 250.0,
+    "token_address": ""
+  },
+  {
+    "ticker": "tNVDA",
+    "stock": "Test Nvidia",
+    "reference_value": 140.0,
+    "token_address": ""
+  }
+]
+

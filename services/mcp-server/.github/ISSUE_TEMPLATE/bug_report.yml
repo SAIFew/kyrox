@@ -1,0 +1,101 @@
+name: Bug report
+description: Report a reproducible KYROX problem.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for helping test **KYROX (`kyrox-mcp`)** on **Base Sepolia testnet (`chainId: 84532`)**.
+        To help us reproduce and resolve your issue quickly, please complete the fields below with exact, verifiable details.
+
+        ### Mandatory Security & Privacy Warnings
+        - **Never upload private keys.**
+        - **Never upload recovery phrases (seed phrases / mnemonics).**
+        - **Never upload `.env` files.**
+        - **Never upload credentials or API secrets.**
+        - **Do not include personal information that is not necessary.**
+        - **Security vulnerabilities must be disclosed privately using the procedure in `SECURITY.md`, not posted as public exploit details.**
+
+  - type: input
+    id: kyrox_version
+    attributes:
+      label: KYROX version
+      description: Which KYROX version or Git commit hash are you using?
+      placeholder: "0.1.0 (or commit hash, e.g., 6965210)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Environment
+      description: Where did you encounter this bug? If you select "Other, with explanation", provide full details in the field below.
+      options:
+        - Local installation
+        - Base Sepolia
+        - Local installation + Base Sepolia
+        - Other, with explanation
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment_explanation
+    attributes:
+      label: Environment details / Other explanation
+      description: Specify your operating system, Python version, MCP client (Claude Desktop, Antigravity, MCP Inspector, or direct STDIO), and an explanation if you selected "Other, with explanation" above.
+      placeholder: |
+        - Environment selection: Local installation / Base Sepolia / Other
+        - Operating System: Windows 11 / macOS / Linux
+        - Python version: 3.13.7 (64-bit)
+        - MCP Host / Client: Claude Desktop / Antigravity / MCP Inspector
+        - Explanation (if Other):
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps_to_reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Provide the exact reproduction steps. Please use numbered steps (1, 2, 3...) and include the MCP tool name and public/redacted input arguments.
+      placeholder: |
+        1. Start the KYROX MCP server in virtual environment...
+        2. Invoke tool `<tool_name>` with arguments `{...}`...
+        3. Observe the returned payload or error...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_behaviour
+    attributes:
+      label: Expected behaviour
+      description: Describe what you expected KYROX to return or do.
+      placeholder: "Expected the tool to return a structured response with..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual_behaviour
+    attributes:
+      label: Actual behaviour
+      description: Describe what actually happened, including any error message or `error_code` returned.
+      placeholder: "The tool returned..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: relevant_logs
+    attributes:
+      label: Relevant logs
+      description: "Optional: Paste relevant log lines from `logs/audit.jsonl` or `stderr`. IMPORTANT: Remove all sensitive data before submitting—never include private keys, recovery phrases, `.env` contents, credentials, API secrets, or unnecessary personal information."
+      render: shell
+    validations:
+      required: false
+
+  - type: upload
+    id: screenshot_or_recording
+    attributes:
+      label: Screenshot or recording
+      description: "Optional: Attach relevant screenshots or screen recordings demonstrating the bug. Verify that no private keys, recovery phrases, `.env` files, credentials, API secrets, or unnecessary personal information are visible."
+    validations:
+      required: false
