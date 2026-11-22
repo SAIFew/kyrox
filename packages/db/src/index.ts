@@ -24,3 +24,24 @@ export function createDatabase(connectionString: string) {
 }
 
 export { schema };
+export {
+  appEvents,
+  authNonces,
+  authSessions,
+  issuedQuotes,
+  priceIngestionEvents,
+  priceObservations,
+  pricePublicationTransitions,
+  pricePublications,
+  tradeIntents,
+} from "./schema.js";
+export type {
+  NewPriceIngestionEventRow,
+  NewPriceObservationRow,
+  NewPricePublicationRow,
+  NewPricePublicationTransitionRow,
+  PriceIngestionEventRow,
+  PriceObservationRow,
+  PricePublicationRow,
+  PricePublicationTransitionRow,
+} from "./schema.js";

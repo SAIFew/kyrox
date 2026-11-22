@@ -1,0 +1,48 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1795272079044,
+      "tag": "0000_price_ingestion",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1795279151128,
+      "tag": "0001_publication_lifecycle",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795283855577,
+      "tag": "0002_publication_state_machine",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1795284169167,
+      "tag": "0003_integrity_checks",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1795285276647,
+      "tag": "0004_consumer_app",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1795285476965,
+      "tag": "0005_intent_blocks",
+      "breakpoints": true
+    }
+  ]
+}
