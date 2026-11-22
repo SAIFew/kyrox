@@ -25,7 +25,7 @@ node apps/marketing/scripts/validate.mjs http://127.0.0.1:4173
 
 The script checks all six target viewport widths, overflow, navigation, CTAs,
 metadata, keyboard behavior, reduced motion, contrast, console/network errors,
-and writes screenshots plus `validation-results.txt` outside the repository.
+and writes screenshots plus `validation-results.txt` to `KYROX_MARKETING_SHOTS_DIR` (or the optional second CLI argument, defaulting to the git-ignored `apps/marketing/.validation/` directory).
 
 ## Deployment
 
