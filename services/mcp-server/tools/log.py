@@ -1,0 +1,638 @@
+"""Structured, redacted JSONL audit logging for KYROX MCP tools and services.
+
+Features:
+- ISO-8601 UTC timestamps (``YYYY-MM-DDTHH:MM:SS.ffffffZ``).
+- Recursive sensitive-data redaction across arguments, context, and errors.
+- Thread-safe concurrent writes with deterministic size-based log rotation.
+- Automatic log-directory creation and recovery on missing directories.
+- Clean MCP ``stdio`` separation (never writes to ``stdout``; fallback to ``stderr``).
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping
+from datetime import datetime, timezone
+import functools
+import inspect
+import json
+import os
+from pathlib import Path
+import sys
+import threading
+import time
+from typing import Any, TypeVar
+
+from tools.errors import (
+    REDACTED_PLACEHOLDER,
+    AuditLogError,
+    ErrorClassification,
+    ErrorCode,
+    classify_error_message,
+    classify_exception,
+    is_sensitive_key,
+    redact_sensitive_data,
+    redact_text,
+)
+
+PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent
+DEFAULT_LOG_DIR: Path = PROJECT_ROOT / "logs"
+DEFAULT_LOG_FILENAME: str = "audit.jsonl"
+DEFAULT_MAX_BYTES: int = 5 * 1024 * 1024  # 5 MiB
+DEFAULT_BACKUP_COUNT: int = 5
+
+F = TypeVar("F", bound=Callable[..., Any])
+
+_LOGGER_LOCK = threading.RLock()
+_ACTIVE_LOGGER: AuditLogger | None = None
+_ACTIVE_CONFIG_KEY: tuple[str, str, int, int] | None = None
+_LAST_ENV_SIGNATURE: tuple[str, str, str, str] | None = None
+_AUDIT_CALL_STATE = threading.local()
+
+
+def is_in_audited_tool_call() -> bool:
+    """Return ``True`` when the current thread is already inside an ``@audit_tool_call`` wrapper."""
+    return getattr(_AUDIT_CALL_STATE, "depth", 0) > 0
+
+
+def _current_env_signature() -> tuple[str, str, str, str]:
+    """Capture a snapshot of the KYROX_LOG_* environment variables."""
+    return (
+        os.getenv("KYROX_LOG_DIR", "").strip(),
+        os.getenv("KYROX_LOG_FILE", "").strip(),
+        os.getenv("KYROX_LOG_MAX_BYTES", "").strip(),
+        os.getenv("KYROX_LOG_BACKUP_COUNT", "").strip(),
+    )
+
+
+def utc_now_iso() -> str:
+    """Return the current UTC timestamp in ISO-8601 format with a ``Z`` suffix."""
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _resolve_env_log_config(
+    log_dir: Path | str | None = None,
+    filename: str | None = None,
+    max_bytes: int | None = None,
+    backup_count: int | None = None,
+) -> tuple[Path, str, int, int]:
+    """Resolve logger configuration from explicit arguments or environment variables."""
+    if log_dir is not None:
+        resolved_dir = Path(log_dir)
+    else:
+        env_dir = os.getenv("KYROX_LOG_DIR", "").strip()
+        resolved_dir = Path(env_dir) if env_dir else DEFAULT_LOG_DIR
+
+    resolved_filename = (
+        filename.strip()
+        if isinstance(filename, str) and filename.strip()
+        else os.getenv("KYROX_LOG_FILE", "").strip() or DEFAULT_LOG_FILENAME
+    )
+
+    if max_bytes is not None:
+        resolved_max_bytes = max(0, int(max_bytes))
+    else:
+        env_max = os.getenv("KYROX_LOG_MAX_BYTES", "").strip()
+        try:
+            resolved_max_bytes = max(0, int(env_max)) if env_max else DEFAULT_MAX_BYTES
+        except ValueError:
+            resolved_max_bytes = DEFAULT_MAX_BYTES
+
+    if backup_count is not None:
+        resolved_backups = max(0, int(backup_count))
+    else:
+        env_backups = os.getenv("KYROX_LOG_BACKUP_COUNT", "").strip()
+        try:
+            resolved_backups = (
+                max(0, int(env_backups)) if env_backups else DEFAULT_BACKUP_COUNT
+            )
+        except ValueError:
+            resolved_backups = DEFAULT_BACKUP_COUNT
+
+    return resolved_dir, resolved_filename, resolved_max_bytes, resolved_backups
+
+
+class AuditLogger:
+    """Thread-safe structured JSONL audit logger with rotation and secret redaction."""
+
+    def __init__(
+        self,
+        log_dir: Path | str | None = None,
+        *,
+        filename: str = DEFAULT_LOG_FILENAME,
+        max_bytes: int = DEFAULT_MAX_BYTES,
+        backup_count: int = DEFAULT_BACKUP_COUNT,
+    ) -> None:
+        resolved_dir, resolved_name, resolved_max, resolved_backups = (
+            _resolve_env_log_config(
+                log_dir=log_dir,
+                filename=filename,
+                max_bytes=max_bytes,
+                backup_count=backup_count,
+            )
+        )
+        self._lock = _LOGGER_LOCK
+        self._log_dir: Path = resolved_dir
+        self._filename: str = resolved_name
+        self._max_bytes: int = resolved_max
+        self._backup_count: int = resolved_backups
+        self._ensure_log_dir()
+
+    @property
+    def log_dir(self) -> Path:
+        """Directory where JSONL audit logs are stored."""
+        return self._log_dir
+
+    @property
+    def log_file(self) -> Path:
+        """Active JSONL audit log file path."""
+        return self._log_dir / self._filename
+
+    @property
+    def max_bytes(self) -> int:
+        """Maximum size in bytes before the active log file is rotated."""
+        return self._max_bytes
+
+    @property
+    def backup_count(self) -> int:
+        """Number of rotated backup log files retained."""
+        return self._backup_count
+
+    def _ensure_log_dir(self) -> None:
+        """Ensure the target log directory exists on disk."""
+        try:
+            self._log_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            sys.stderr.write(
+                f"[KYROX-AUDIT-WARN] Unable to create log directory "
+                f"{redact_text(str(self._log_dir))}: {redact_text(str(exc))}\n"
+            )
+
+    def _rotate_if_needed(self, incoming_byte_length: int) -> None:
+        """Rotate ``audit.jsonl`` to ``audit.jsonl.1``..``audit.jsonl.N`` when full."""
+        if self._max_bytes <= 0:
+            return
+
+        target = self.log_file
+        try:
+            if not target.is_file():
+                return
+            current_size = target.stat().st_size
+        except OSError:
+            return
+
+        if current_size == 0 or (current_size + incoming_byte_length) <= self._max_bytes:
+            return
+
+        if self._backup_count <= 0:
+            try:
+                target.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return
+
+        oldest = Path(f"{target}.{self._backup_count}")
+        try:
+            if oldest.exists():
+                oldest.unlink()
+        except OSError:
+            pass
+
+        for idx in range(self._backup_count - 1, 0, -1):
+            src = Path(f"{target}.{idx}")
+            dst = Path(f"{target}.{idx + 1}")
+            try:
+                if src.exists():
+                    os.replace(src, dst)
+            except OSError:
+                pass
+
+        first_backup = Path(f"{target}.1")
+        try:
+            if target.exists():
+                os.replace(target, first_backup)
+        except OSError:
+            pass
+
+    def log_event(
+        self,
+        *,
+        tool: str,
+        status: str,
+        args: Mapping[str, Any] | None = None,
+        duration_ms: float | None = None,
+        error_code: ErrorCode | str | None = None,
+        error_category: str | None = None,
+        retryable: bool = False,
+        error_message: str | None = None,
+        context: Mapping[str, Any] | None = None,
+        event: str = "tool_call",
+        level: str | None = None,
+        fail_closed: bool = False,
+    ) -> dict[str, Any]:
+        """Write a single redacted JSONL audit entry and return the recorded dict."""
+        normalized_status = "ok" if status == "ok" else "error"
+        resolved_code: str | None
+        if isinstance(error_code, ErrorCode):
+            resolved_code = error_code.value
+        elif isinstance(error_code, str) and error_code.strip():
+            resolved_code = error_code.strip()
+        else:
+            resolved_code = None
+
+        if level is not None:
+            resolved_level = level.upper()
+        elif normalized_status == "ok":
+            resolved_level = "INFO"
+        elif resolved_code in (
+            ErrorCode.INTERNAL_ERROR.value,
+            ErrorCode.STOCK_DATA_MISSING.value,
+            ErrorCode.STOCK_DATA_CORRUPTED.value,
+            ErrorCode.STOCK_SCHEMA_INVALID.value,
+            ErrorCode.DUPLICATE_TICKER.value,
+        ):
+            resolved_level = "ERROR"
+        else:
+            resolved_level = "WARNING"
+
+        entry: dict[str, Any] = {
+            "timestamp": utc_now_iso(),
+            "level": resolved_level,
+            "event": redact_text(str(event)),
+            "tool": redact_text(str(tool)),
+            "status": normalized_status,
+            "duration_ms": round(max(0.0, float(duration_ms or 0.0)), 3),
+            "args": redact_sensitive_data(dict(args) if args else {}),
+            "error_code": resolved_code,
+            "error_category": redact_text(error_category) if error_category else None,
+            "retryable": bool(retryable) if normalized_status == "error" else False,
+            "error_message": (
+                redact_text(str(error_message))
+                if error_message is not None
+                else None
+            ),
+            "context": redact_sensitive_data(dict(context) if context else {}),
+        }
+
+        serialized_line = json.dumps(entry, ensure_ascii=False) + "\n"
+        encoded_line = serialized_line.encode("utf-8")
+
+        with self._lock:
+            self._ensure_log_dir()
+            self._rotate_if_needed(len(encoded_line))
+            try:
+                with self.log_file.open("ab") as fh:
+                    fh.write(encoded_line)
+                    fh.flush()
+            except OSError as exc:
+                sys.stderr.write(
+                    f"[KYROX-AUDIT-FALLBACK] {redact_text(str(exc))} | "
+                    f"{serialized_line}"
+                )
+                if fail_closed:
+                    raise AuditLogError(
+                        f"Audit logging failed for {redact_text(str(tool))}; "
+                        f"failing closed: {redact_text(str(exc))}",
+                        code=ErrorCode.INTERNAL_ERROR,
+                    ) from exc
+
+        return entry
+
+
+def configure_audit_logger(
+    log_dir: Path | str | None = None,
+    *,
+    filename: str | None = None,
+    max_bytes: int | None = None,
+    backup_count: int | None = None,
+) -> AuditLogger:
+    """Configure or update the process-wide singleton ``AuditLogger`` idempotently."""
+    global _ACTIVE_LOGGER, _ACTIVE_CONFIG_KEY, _LAST_ENV_SIGNATURE
+    resolved_dir, resolved_name, resolved_max, resolved_backups = (
+        _resolve_env_log_config(
+            log_dir=log_dir,
+            filename=filename,
+            max_bytes=max_bytes,
+            backup_count=backup_count,
+        )
+    )
+    config_key = (
+        str(resolved_dir.resolve()),
+        resolved_name,
+        resolved_max,
+        resolved_backups,
+    )
+    with _LOGGER_LOCK:
+        if _ACTIVE_LOGGER is not None and _ACTIVE_CONFIG_KEY == config_key:
+            _ACTIVE_LOGGER._ensure_log_dir()
+            _LAST_ENV_SIGNATURE = _current_env_signature()
+            return _ACTIVE_LOGGER
+
+        _ACTIVE_LOGGER = AuditLogger(
+            log_dir=resolved_dir,
+            filename=resolved_name,
+            max_bytes=resolved_max,
+            backup_count=resolved_backups,
+        )
+        _ACTIVE_CONFIG_KEY = config_key
+        _LAST_ENV_SIGNATURE = _current_env_signature()
+        return _ACTIVE_LOGGER
+
+
+def get_audit_logger() -> AuditLogger:
+    """Return the active ``AuditLogger``, re-syncing if environment settings changed."""
+    with _LOGGER_LOCK:
+        if (
+            _ACTIVE_LOGGER is not None
+            and _LAST_ENV_SIGNATURE == _current_env_signature()
+        ):
+            _ACTIVE_LOGGER._ensure_log_dir()
+            return _ACTIVE_LOGGER
+        return configure_audit_logger()
+
+
+def reset_audit_logger() -> None:
+    """Reset the cached logger singleton so the next call re-reads environment settings."""
+    global _ACTIVE_LOGGER, _ACTIVE_CONFIG_KEY, _LAST_ENV_SIGNATURE
+    with _LOGGER_LOCK:
+        _ACTIVE_LOGGER = None
+        _ACTIVE_CONFIG_KEY = None
+        _LAST_ENV_SIGNATURE = None
+
+
+def _extract_policy_audit_context(
+    result: Mapping[str, Any],
+    target_context: dict[str, Any],
+) -> None:
+    """Populate structured policy decision metadata into ``target_context`` when present."""
+    if "requires_human_approval" in result:
+        target_context["requires_human_approval"] = bool(
+            result["requires_human_approval"]
+        )
+    policy_obj = result.get("policy")
+    if isinstance(policy_obj, Mapping):
+        allowed_flag = bool(policy_obj.get("allowed", policy_obj.get("passed", False)))
+        passed_flag = bool(policy_obj.get("passed", allowed_flag))
+        target_context["policy"] = dict(policy_obj)
+        target_context["allowed"] = allowed_flag
+        target_context["passed"] = passed_flag
+        target_context["decision"] = "allowed" if allowed_flag else "denied"
+        if "ticker" in policy_obj and policy_obj["ticker"] is not None:
+            target_context.setdefault("ticker", policy_obj["ticker"])
+        if "amount_decimal" in policy_obj and policy_obj["amount_decimal"] is not None:
+            target_context.setdefault("amount_decimal", policy_obj["amount_decimal"])
+            target_context["normalized_amount"] = policy_obj["amount_decimal"]
+        elif "amount_decimal" in result and result["amount_decimal"] is not None:
+            target_context["normalized_amount"] = result["amount_decimal"]
+        if "max_amount" in policy_obj:
+            target_context["max_amount"] = policy_obj["max_amount"]
+            target_context["effective_max_amount"] = policy_obj["max_amount"]
+        reasons_raw = policy_obj.get("reasons", [])
+        reasons_list = list(reasons_raw) if isinstance(reasons_raw, (list, tuple)) else []
+        target_context["reasons"] = reasons_list
+        target_context["denial_reasons"] = reasons_list
+        target_context["requires_human_approval"] = bool(
+            policy_obj.get("requires_human_approval", True)
+        )
+        if "policy_version" in policy_obj:
+            target_context["policy_version"] = policy_obj["policy_version"]
+
+
+def _summarize_result(result: Any) -> dict[str, Any]:
+    """Build a compact, non-sensitive summary of a successful tool return value."""
+    if isinstance(result, dict):
+        summary: dict[str, Any] = {"result_type": "dict"}
+        if "ticker" in result:
+            summary["ticker"] = result["ticker"]
+        if "wallet" in result:
+            summary["wallet"] = result["wallet"]
+        if "chain" in result:
+            summary["chain"] = result["chain"]
+        if isinstance(result.get("balances"), list):
+            summary["balance_count"] = len(result["balances"])
+        if isinstance(result.get("holdings"), list):
+            summary["holding_count"] = len(result["holdings"])
+        if "currency" in result:
+            summary["currency"] = result["currency"]
+        if isinstance(result.get("unpriced_holdings"), list):
+            summary["unpriced_count"] = len(result["unpriced_holdings"])
+        if "signed" in result:
+            summary["status"] = result.get("status")
+            summary["signed"] = result["signed"]
+            if "from_wallet" in result:
+                summary["from_wallet"] = result["from_wallet"]
+            if "to" in result:
+                summary["to"] = result["to"]
+            if "token_address" in result:
+                summary["token_address"] = result["token_address"]
+            if "amount_decimal" in result:
+                summary["amount_decimal"] = result["amount_decimal"]
+                summary["normalized_amount"] = result["amount_decimal"]
+            if "amount_base_units" in result:
+                summary["amount_base_units"] = result["amount_base_units"]
+            if "intent_id" in result:
+                summary["intent_id"] = result["intent_id"]
+        if "would_succeed" in result:
+            summary["would_succeed"] = result["would_succeed"]
+            if "simulation_status" in result:
+                summary["simulation_status"] = result["simulation_status"]
+            if "estimated_gas" in result:
+                summary["estimated_gas"] = result["estimated_gas"]
+            if "block_number" in result:
+                summary["block_number"] = result["block_number"]
+            if "block_identifier" in result:
+                summary["block_identifier"] = result["block_identifier"]
+        _extract_policy_audit_context(result, summary)
+        return summary
+
+    if isinstance(result, list):
+        return {"result_type": "list", "item_count": len(result)}
+
+    if isinstance(result, str):
+        return {"result_type": "str", "length": len(result)}
+
+    return {"result_type": type(result).__name__}
+
+
+def _bind_call_arguments(
+    func: Callable[..., Any],
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+) -> dict[str, Any]:
+    """Bind positional and keyword arguments to parameter names for structured logging."""
+    try:
+        sig = inspect.signature(func)
+        bound = sig.bind_partial(*args, **kwargs)
+        return {
+            k: v for k, v in bound.arguments.items() if not str(k).startswith("_")
+        }
+    except Exception:
+        fallback: dict[str, Any] = {}
+        if args:
+            fallback["positional_args"] = list(args)
+        if kwargs:
+            fallback.update(
+                {k: v for k, v in kwargs.items() if not str(k).startswith("_")}
+            )
+        return fallback
+
+
+def _build_fail_closed_audit_response(
+    tool_name: str,
+    audit_exc: BaseException,
+) -> dict[str, Any]:
+    """Build a fail-closed rejection dictionary when audit logging fails on an allowed operation."""
+    raw_detail = redact_text(str(audit_exc)).strip()
+    if raw_detail.lower().startswith("audit logging failed"):
+        safe_msg = raw_detail
+    else:
+        safe_msg = (
+            f"Audit logging failed for {redact_text(tool_name)}; "
+            f"failing closed: {raw_detail}"
+        )
+    return {
+        "error": safe_msg,
+        "error_code": ErrorCode.INTERNAL_ERROR.value,
+        "error_category": "audit",
+        "retryable": False,
+        "status": "rejected",
+        "signed": False,
+        "broadcast": False,
+        "requires_human_approval": True,
+        "requires_external_signature": True,
+        "signing_mode": "external_wallet_only",
+        "policy": {
+            "passed": False,
+            "allowed": False,
+            "requires_human_approval": True,
+            "reasons": [safe_msg],
+            "error_code": ErrorCode.INTERNAL_ERROR.value,
+            "error_category": "audit",
+            "policy_version": "v0.1-day11",
+        },
+    }
+
+
+def audit_tool_call(
+    tool_name: str | None = None,
+    *,
+    reraise_exceptions: tuple[type[BaseException], ...] = (),
+    fail_closed: bool = False,
+) -> Callable[[F], F]:
+    """Decorator that wraps a KYROX tool with structured JSONL audit logging and error handling."""
+
+    def decorator(func: F) -> F:
+        resolved_tool_name = tool_name or func.__name__
+
+        @functools.wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            if is_in_audited_tool_call():
+                return func(*args, **kwargs)
+
+            current_depth = getattr(_AUDIT_CALL_STATE, "depth", 0)
+            _AUDIT_CALL_STATE.depth = current_depth + 1
+            start = time.perf_counter()
+            bound_args = _bind_call_arguments(func, args, kwargs)
+            logger = get_audit_logger()
+
+            try:
+                try:
+                    result = func(*args, **kwargs)
+                except BaseException as exc:
+                    duration_ms = (time.perf_counter() - start) * 1000.0
+                    if isinstance(exc, Exception):
+                        classification: ErrorClassification = classify_exception(
+                            exc, tool_name=resolved_tool_name
+                        )
+                        try:
+                            logger.log_event(
+                                tool=resolved_tool_name,
+                                status="error",
+                                args=bound_args,
+                                duration_ms=duration_ms,
+                                error_code=classification.code,
+                                error_category=classification.category,
+                                retryable=classification.retryable,
+                                error_message=classification.message,
+                                context={"exception_type": type(exc).__name__},
+                            )
+                        except Exception:
+                            pass
+                        if reraise_exceptions and isinstance(exc, reraise_exceptions):
+                            raise
+                        return classification.to_response()
+                    raise
+
+                duration_ms = (time.perf_counter() - start) * 1000.0
+                if isinstance(result, dict) and "error" in result:
+                    raw_error = str(result.get("error", ""))
+                    classification = classify_error_message(raw_error)
+                    safe_result = dict(result)
+                    safe_result["error"] = classification.message
+                    err_context: dict[str, Any] = {"response_type": "error_dict"}
+                    if "would_succeed" in safe_result:
+                        err_context["would_succeed"] = safe_result["would_succeed"]
+                        if "simulation_status" in safe_result:
+                            err_context["simulation_status"] = safe_result["simulation_status"]
+                        if "signed" in safe_result:
+                            err_context["signed"] = safe_result["signed"]
+                        if "intent_id" in safe_result:
+                            err_context["intent_id"] = safe_result["intent_id"]
+                    elif "signed" in safe_result:
+                        err_context["signed"] = safe_result["signed"]
+                    _extract_policy_audit_context(safe_result, err_context)
+                    try:
+                        logger.log_event(
+                            tool=resolved_tool_name,
+                            status="error",
+                            args=bound_args,
+                            duration_ms=duration_ms,
+                            error_code=classification.code,
+                            error_category=classification.category,
+                            retryable=classification.retryable,
+                            error_message=classification.message,
+                            context=err_context,
+                        )
+                    except Exception:
+                        pass
+                    return safe_result
+
+                try:
+                    logger.log_event(
+                        tool=resolved_tool_name,
+                        status="ok",
+                        args=bound_args,
+                        duration_ms=duration_ms,
+                        context=_summarize_result(result),
+                        fail_closed=fail_closed,
+                    )
+                except Exception as audit_exc:
+                    if fail_closed:
+                        return _build_fail_closed_audit_response(
+                            resolved_tool_name, audit_exc
+                        )
+                return result
+            finally:
+                _AUDIT_CALL_STATE.depth = current_depth
+
+        return wrapper  # type: ignore[return-value]
+
+    return decorator
+
+
+__all__ = [
+    "AuditLogger",
+    "DEFAULT_BACKUP_COUNT",
+    "DEFAULT_LOG_DIR",
+    "DEFAULT_LOG_FILENAME",
+    "DEFAULT_MAX_BYTES",
+    "REDACTED_PLACEHOLDER",
+    "audit_tool_call",
+    "configure_audit_logger",
+    "get_audit_logger",
+    "is_in_audited_tool_call",
+    "is_sensitive_key",
+    "redact_sensitive_data",
+    "redact_text",
+    "reset_audit_logger",
+    "utc_now_iso",
+]

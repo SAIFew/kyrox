@@ -1,0 +1,28 @@
+include LICENSE
+include README.md
+include SECURITY.md
+include .env.example
+include requirements.txt
+include requirements-dev.txt
+include requirements-lock.txt
+include server.py
+recursive-include tools *.py
+recursive-include data *.json *.md .gitkeep
+recursive-include contracts *.sol
+recursive-include tests *.py
+prune .agents
+prune .codex
+prune .venv
+prune artifacts
+prune build
+prune content
+prune dist
+prune docs
+prune logs
+prune planning
+global-exclude AGENTS.md
+global-exclude __pycache__
+global-exclude *.py[cod]
+global-exclude .DS_Store
+global-exclude Thumbs.db
+
