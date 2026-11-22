@@ -6,7 +6,10 @@
   "scripts": {
     "preview": "remotion studio src/index.ts",
     "render": "remotion render src/index.ts KyroxProductLaunchFilm final/KYROX_Product_Launch_Film.mp4 --codec h264 --crf 17",
-    "still": "remotion still src/index.ts KyroxProductLaunchFilm renders/preview/hero.png --frame=75"
+    "still": "remotion still src/index.ts KyroxProductLaunchFilm renders/preview/hero.png --frame=75",
+    "preview:phase0": "remotion studio src/index.ts --port=3000",
+    "render:phase0": "remotion render src/index.ts KyroxPhase0Film final/KYROX_Phase_0_Complete.mp4 --codec h264 --crf 17 --concurrency=2 --timeout=120000",
+    "poster:phase0": "remotion still src/index.ts KyroxPhase0Film final/KYROX_Phase_0_Poster.png --frame=1120"
   },
   "dependencies": {
     "@remotion/cli": "4.0.373",
