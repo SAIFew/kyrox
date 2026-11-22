@@ -1,0 +1,1 @@
+KYROX Day 5 V2 carousel. Four 1080×1350 slides. Data shown comes from ../data/stocks.json. Local demo fixtures only; not live market data. Tools verified in server.py: list_stocks() and get_stock_info(ticker); STDIO transport.

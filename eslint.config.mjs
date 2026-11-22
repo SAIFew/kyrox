@@ -18,6 +18,8 @@ export default tseslint.config(
       "packages/contracts/cache/**",
       "packages/contracts/broadcast/**",
       "pnpm-lock.yaml",
+      "content/**",
+      "services/mcp-server/**",
     ],
   },
   js.configs.recommended,
