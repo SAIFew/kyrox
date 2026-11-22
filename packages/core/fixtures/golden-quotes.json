@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "priceUnit": "6-decimal USDC per one whole stock token",
+  "rounding": "floor",
+  "cases": {
+    "buy-1-usdc-18dp": {
+      "side": "buy",
+      "stockDecimals": 18,
+      "priceUsdcPerWholeToken": "230000000",
+      "amountIn": "1000000",
+      "expectedAmountOut": "4347826086956521"
+    },
+    "buy-100-usdc-18dp": {
+      "side": "buy",
+      "stockDecimals": 18,
+      "priceUsdcPerWholeToken": "230000000",
+      "amountIn": "100000000",
+      "expectedAmountOut": "434782608695652173"
+    },
+    "buy-1000-usdc-18dp": {
+      "side": "buy",
+      "stockDecimals": 18,
+      "priceUsdcPerWholeToken": "230000000",
+      "amountIn": "1000000000",
+      "expectedAmountOut": "4347826086956521739"
+    },
+    "buy-1-usdc-8dp": {
+      "side": "buy",
+      "stockDecimals": 8,
+      "priceUsdcPerWholeToken": "230000000",
+      "amountIn": "1000000",
+      "expectedAmountOut": "434782"
+    },
+    "buy-1-usdc-6dp": {
+      "side": "buy",
+      "stockDecimals": 6,
+      "priceUsdcPerWholeToken": "230000000",
+      "amountIn": "1000000",
+      "expectedAmountOut": "4347"
+    },
+    "buy-1-wei-usdc-18dp": {
+      "side": "buy",
+      "stockDecimals": 18,
+      "priceUsdcPerWholeToken": "3000000",
+      "amountIn": "1",
+      "expectedAmountOut": "333333333333"
+    },
+    "buy-1-usdc-price-1-wei": {
+      "side": "buy",
+      "stockDecimals": 18,
+      "priceUsdcPerWholeToken": "1",
+      "amountIn": "1000000",
+      "expectedAmountOut": "1000000000000000000000000"
+    },
+    "buy-123456789-usdc-odd-price": {
+      "side": "buy",
+      "stockDecimals": 18,
+      "priceUsdcPerWholeToken": "987654321",
+      "amountIn": "123456789",
+      "expectedAmountOut": "124999998860937500"
+    },
+    "sell-1-stock-18dp": {
+      "side": "sell",
+      "stockDecimals": 18,
+      "priceUsdcPerWholeToken": "230000000",
+      "amountIn": "1000000000000000000",
+      "expectedAmountOut": "230000000"
+    },
+    "sell-1-stock-8dp": {
+      "side": "sell",
+      "stockDecimals": 8,
+      "priceUsdcPerWholeToken": "230000000",
+      "amountIn": "100000000",
+      "expectedAmountOut": "230000000"
+    },
+    "sell-1-stock-6dp": {
+      "side": "sell",
+      "stockDecimals": 6,
+      "priceUsdcPerWholeToken": "230000000",
+      "amountIn": "1000000",
+      "expectedAmountOut": "230000000"
+    },
+    "sell-1-wei-stock-8dp": {
+      "side": "sell",
+      "stockDecimals": 8,
+      "priceUsdcPerWholeToken": "230000000",
+      "amountIn": "1",
+      "expectedAmountOut": "2"
+    },
+    "sell-3-stock-price-1-wei-6dp": {
+      "side": "sell",
+      "stockDecimals": 6,
+      "priceUsdcPerWholeToken": "1",
+      "amountIn": "3000000",
+      "expectedAmountOut": "3"
+    },
+    "sell-half-stock-18dp": {
+      "side": "sell",
+      "stockDecimals": 18,
+      "priceUsdcPerWholeToken": "230000000",
+      "amountIn": "500000000000000000",
+      "expectedAmountOut": "115000000"
+    }
+  },
+  "minOutputCases": {
+    "zero-bps": {
+      "quoted": "4347826086956521",
+      "bps": 0,
+      "expected": "4347826086956521"
+    },
+    "fifty-bps": {
+      "quoted": "4347826086956521",
+      "bps": 50,
+      "expected": "4326086956521738"
+    },
+    "ten-percent": {
+      "quoted": "1000000000",
+      "bps": 1000,
+      "expected": "900000000"
+    },
+    "one-percent": {
+      "quoted": "230000000",
+      "bps": 100,
+      "expected": "227700000"
+    }
+  }
+}
