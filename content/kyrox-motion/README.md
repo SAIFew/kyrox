@@ -1,6 +1,6 @@
 # KYROX — Inside One MCP Tool Call
 
-A 22-second Remotion explainer showing the repository's local `get_stock_info("tAAPL")` execution path. The project is separate from `D:\Projects\kyro-mcp`; it does not modify the Python backend.
+A 22-second Remotion explainer showing the repository's local `get_stock_info("tAAPL")` execution path. The project is a standalone workspace under `content/kyrox-motion/` alongside `services/mcp-server/`; it does not modify the Python backend.
 
 ## Verified flow represented
 
