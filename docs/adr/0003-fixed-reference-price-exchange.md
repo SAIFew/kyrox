@@ -19,7 +19,8 @@ Implement `KYROXExchange` as a fixed-reference-price mint/burn venue:
 
 - The quote price comes from the validated reference feed.
 - Users mint stock tokens with tUSDC, or burn stock tokens for tUSDC.
-- A deterministic fee and rounding rule applies in both directions.
+- A deterministic rounding rule applies in both directions. No fee is
+  implemented: the "fee" anticipated here was not adopted (see ADR-0008).
 - The contract quote view and `packages/core` must produce identical results
   for the same state.
 - No AMM, no DEX aggregator, no external routing.
