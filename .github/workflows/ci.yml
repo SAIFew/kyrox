@@ -64,6 +64,13 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
 
+      - name: Install pinned Solidity dependencies
+        run: |
+          if [ ! -d lib/openzeppelin-contracts ] || [ ! -d lib/forge-std ]; then
+            forge install OpenZeppelin/openzeppelin-contracts@v5.6.1 --no-git
+            forge install foundry-rs/forge-std@v1.17.0 --no-git
+          fi
+
       - name: Format, build and test when sources exist
         run: |
           if find src test -name '*.sol' -print -quit | grep -q .; then

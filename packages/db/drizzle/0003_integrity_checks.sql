@@ -1,0 +1,2 @@
+ALTER TABLE "price_observations" ADD CONSTRAINT "price_observations_status_check" CHECK ("price_observations"."status" in ('valid','invalid'));--> statement-breakpoint
+ALTER TABLE "price_publications" ADD CONSTRAINT "price_publications_status_check" CHECK ("price_publications"."status" in ('prepared','submitted','included','confirmed','verified','failed','verification_failed','reorged'));
