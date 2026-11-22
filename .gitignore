@@ -52,3 +52,28 @@ deployments/base-sepolia.verified-pending.json
 # Playwright artifacts
 apps/web/test-results/
 apps/web/playwright-report/
+
+# Python virtual environments, caches, and packaging artifacts
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+.eggs/
+wheelhouse/
+
+# Marketing validation output directory
+apps/marketing/.validation/
+
+# Standalone content generated build/export outputs (nested project .gitignore files manage renders/)
+content/**/build/
+content/**/exports/
+content/**/out/
+content/**/final/*.png
+content/**/final/**/*.png
+content/**/slides/*.png
+content/**/preview.png

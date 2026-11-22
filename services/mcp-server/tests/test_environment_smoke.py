@@ -182,3 +182,4 @@ def test_readme_documents_all_seven_tools_and_no_private_paths() -> None:
     assert "The Six MCP Tools" not in readme, "Stale 'Six MCP Tools' heading must not remain in README.md"
     assert "C:\\Users\\Lenovo" not in readme
     assert "D:\\Projects\\kyro-mcp" not in readme
+

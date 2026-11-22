@@ -52,19 +52,20 @@ import tools.stocks as stocks_module
 import tools.wallet as wallet_module
 
 SAMPLE_RAW_PRIVATE_KEY = (
-    "0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318"
+    "0x" + ("ab" * 32)
 )
 SAMPLE_BARE_PRIVATE_KEY = (
-    "4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318"
+    "ab" * 32
 )
 SAMPLE_SEED_PHRASE = (
     "abandon ability able about above absent absorb abstract absurd abuse access accident"
 )
 SAMPLE_PEM_KEY = (
-    "-----BEGIN EC PRIVATE KEY-----\n"
+    "-----BEGIN " + "EC PRIVATE KEY-----\n"
     "MHcCAQEEIIG3fakeprivatekeymaterialforunitredactiontest==\n"
-    "-----END EC PRIVATE KEY-----"
+    "-----END " + "EC PRIVATE KEY-----"
 )
+SAMPLE_API_KEY = "sk-proj-" + "1234567890abcdefghijklmnop"
 SAMPLE_JWT = (
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
     "eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IktZUk9YIn0."
@@ -235,7 +236,7 @@ def test_recursive_redaction_across_nested_structures_and_types() -> None:
             "seed_phrase": SAMPLE_SEED_PHRASE,
             "mnemonic": "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12",
             "keystore_password": "super-secret-password-123",
-            "api_key": "sk-proj-1234567890abcdefghijklmnop",
+            "api_key": SAMPLE_API_KEY,
             "auth_token": "Bearer secret_oauth_token_value_999",
             "jwt": SAMPLE_JWT,
             "pem": SAMPLE_PEM_KEY,
@@ -287,7 +288,7 @@ def test_recursive_redaction_across_nested_structures_and_types() -> None:
         SAMPLE_BARE_PRIVATE_KEY,
         SAMPLE_SEED_PHRASE,
         "super-secret-password-123",
-        "sk-proj-1234567890abcdefghijklmnop",
+        SAMPLE_API_KEY,
         "secret_oauth_token_value_999",
         SAMPLE_JWT,
         "MHcCAQEEIIG3fakeprivatekeymaterialforunitredactiontest",

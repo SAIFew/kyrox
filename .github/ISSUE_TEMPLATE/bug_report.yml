@@ -1,28 +1,46 @@
 name: Bug report
-description: Report a reproducible KYROX problem.
+description: Report a reproducible problem across any KYROX monorepo component.
 title: "[Bug]: "
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thank you for helping test **KYROX (`kyrox-mcp`)** on **Base Sepolia testnet (`chainId: 84532`)**.
+        Thank you for helping test **KYROX** on **Base Sepolia testnet (`chainId: 84532`)**.
         To help us reproduce and resolve your issue quickly, please complete the fields below with exact, verifiable details.
 
         ### Mandatory Security & Privacy Warnings
         - **Never upload private keys.**
         - **Never upload recovery phrases (seed phrases / mnemonics).**
-        - **Never upload `.env` files.**
+        - **Never upload `.env` or `.env.local` files.**
         - **Never upload credentials or API secrets.**
         - **Do not include personal information that is not necessary.**
         - **Security vulnerabilities must be disclosed privately using the procedure in `SECURITY.md`, not posted as public exploit details.**
 
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which KYROX monorepo component is affected?
+      options:
+        - services/mcp-server (Python MCP Server)
+        - apps/web (Consumer Web Application)
+        - apps/marketing (Static Marketing Website)
+        - packages/core & packages/protocol (Quote, Policy & Protocol)
+        - packages/contracts (Foundry Smart Contracts)
+        - packages/db (Drizzle Database Schema & Migrations)
+        - services/price & services/trade-intent (Price Ingestion & Trade Intent)
+        - content/* (Remotion Films & Design Assets)
+        - CI / Monorepo Tooling
+    validations:
+      required: true
+
   - type: input
     id: kyrox_version
     attributes:
-      label: KYROX version
+      label: KYROX version or commit SHA
       description: Which KYROX version or Git commit hash are you using?
-      placeholder: "0.1.0 (or commit hash, e.g., 6965210)"
+      placeholder: "0.1.0 (or commit hash, e.g., 1bebed7)"
     validations:
       required: true
 
@@ -43,12 +61,12 @@ body:
     id: environment_explanation
     attributes:
       label: Environment details / Other explanation
-      description: Specify your operating system, Python version, MCP client (Claude Desktop, Antigravity, MCP Inspector, or direct STDIO), and an explanation if you selected "Other, with explanation" above.
+      description: Specify your operating system, runtime version (Node.js / Python / Foundry), client (Browser / Claude Desktop / Antigravity / MCP Inspector / STDIO), and an explanation if you selected "Other, with explanation" above.
       placeholder: |
         - Environment selection: Local installation / Base Sepolia / Other
         - Operating System: Windows 11 / macOS / Linux
-        - Python version: 3.13.7 (64-bit)
-        - MCP Host / Client: Claude Desktop / Antigravity / MCP Inspector
+        - Runtime version: Node.js v24 / Python 3.13 (64-bit)
+        - Client / Host: Browser / Claude Desktop / Antigravity / MCP Inspector
         - Explanation (if Other):
     validations:
       required: false
@@ -57,10 +75,10 @@ body:
     id: steps_to_reproduce
     attributes:
       label: Steps to reproduce
-      description: Provide the exact reproduction steps. Please use numbered steps (1, 2, 3...) and include the MCP tool name and public/redacted input arguments.
+      description: Provide the exact reproduction steps. Please use numbered steps (1, 2, 3...) and include the command, route, or MCP tool name and public/redacted input arguments.
       placeholder: |
-        1. Start the KYROX MCP server in virtual environment...
-        2. Invoke tool `<tool_name>` with arguments `{...}`...
+        1. Start the component or service...
+        2. Invoke tool or endpoint with arguments `{...}`...
         3. Observe the returned payload or error...
     validations:
       required: true
@@ -70,7 +88,7 @@ body:
     attributes:
       label: Expected behaviour
       description: Describe what you expected KYROX to return or do.
-      placeholder: "Expected the tool to return a structured response with..."
+      placeholder: "Expected the component to return a structured response with..."
     validations:
       required: true
 
@@ -79,7 +97,7 @@ body:
     attributes:
       label: Actual behaviour
       description: Describe what actually happened, including any error message or `error_code` returned.
-      placeholder: "The tool returned..."
+      placeholder: "The component returned..."
     validations:
       required: true
 
@@ -87,7 +105,7 @@ body:
     id: relevant_logs
     attributes:
       label: Relevant logs
-      description: "Optional: Paste relevant log lines from `logs/audit.jsonl` or `stderr`. IMPORTANT: Remove all sensitive data before submitting—never include private keys, recovery phrases, `.env` contents, credentials, API secrets, or unnecessary personal information."
+      description: "Optional: Paste relevant redacted log lines from `logs/audit.jsonl`, `stderr`, or console output. IMPORTANT: Remove all sensitive data before submitting—never include private keys, recovery phrases, `.env` contents, credentials, API secrets, or unnecessary personal information."
       render: shell
     validations:
       required: false

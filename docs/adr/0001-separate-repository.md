@@ -1,6 +1,6 @@
 # ADR-0001: Separate `kyrox-app` repository
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR-0011](0011-unified-monorepo-and-policy-surface-separation.md) (originally Accepted on 2026-11-21)
 - **Date:** 2026-11-21
 - **Phase:** 0
 

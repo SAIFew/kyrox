@@ -1,0 +1,45 @@
+title = "KYROX Gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[[allowlist]]
+description = "Historical Day 6-7 redaction unit test fixtures in tests/test_logging_and_errors.py"
+commits = [
+  "d19fee0260f4581afb8533e707ccb36453d8cbf3",
+]
+paths = [
+  '''^tests/test_logging_and_errors\.py$''',
+]
+
+[[allowlist]]
+description = "Historical Day 8-10 redaction test fixtures in tests/test_portfolio.py and tests/test_tx.py"
+commits = [
+  "4675bd501a7529a3a499f2cd9e8e94e10cb92b74",
+]
+paths = [
+  '''^tests/test_portfolio\.py$''',
+  '''^tests/test_tx\.py$''',
+]
+
+[[allowlist]]
+description = "Historical Day 11 redaction test fixture in tests/test_policy.py"
+commits = [
+  "cf04939bb17903a6bd9107329077b856e61df06b",
+]
+paths = [
+  '''^tests/test_policy\.py$''',
+]
+
+[[allowlist]]
+description = "Historical Stage 3 subtree import and PR #2 merge commits for services/mcp-server/tests"
+commits = [
+  "fd4c9817fb1de47fcd0fa1c17dac87167f26602f",
+  "1bebed73f95a16c55bf8a730bfa4240fc7dbd46f",
+]
+paths = [
+  '''^services/mcp-server/tests/test_logging_and_errors\.py$''',
+  '''^services/mcp-server/tests/test_policy\.py$''',
+  '''^services/mcp-server/tests/test_portfolio\.py$''',
+  '''^services/mcp-server/tests/test_tx\.py$''',
+]
