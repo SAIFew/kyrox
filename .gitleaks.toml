@@ -1,0 +1,37 @@
+title = "KYROX Gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Scoped historical exception for public web3.py/eth-account doc example fixture in pre-Stage-4 Python redaction tests only"
+commits = [
+  "d19fee0963858cd1b4d8e2ca77b933cc6d1739d7",
+  "4675bd501a7529a3a499f2cd9e8e94e10cb92b74",
+  "59b4a3a7004dafc0c25756407e98371a3f024fae",
+  "fcd023cb13a0fff2a36e7a241905da9d862b82f9",
+  "cf04939bb17903a6bd9107329077b856e61df06b",
+  "d0edc869085eaf25c8dc8c74ee57b509d84dfa9a",
+  "6965210e301028af5acbde6dc4948a9a26243ccf",
+  "63b2b9c65d2a8e9c61097fdd58f8bf370b3ac4e2",
+  "8e418cc831dd44764e0fa07604f70896c8e0c698",
+  "8cdb4c29a75a8b3e82c0bd7ea7b30640b82e8cdf",
+  "b1620d7167b5927cd85c0890ff80baeed95405ae",
+  "f3e6ff2c37c97f94dc4a2d9bb78f62f136146403",
+  "7128531dc24609bfdd547373efe564b6646b3528",
+  "fd4c9817fb1de47fcd0fa1c17dac87167f26602f",
+  "ecd94349029a84ab6ec4ad1727efef95e7e4e4ad",
+  "cc93e7d58a6b45e497d4950df1bda13efc3f84ef",
+  "18b962d660cfa58ebdffb14cca62ad7a478ecf50",
+  "1bebed73f95a16c55bf8a730bfa4240fc7dbd46f",
+]
+paths = [
+  '''^tests/test_logging_and_errors\.py$''',
+  '''^tests/test_policy\.py$''',
+  '''^tests/test_portfolio\.py$''',
+  '''^tests/test_tx\.py$''',
+  '''^services/mcp-server/tests/test_logging_and_errors\.py$''',
+  '''^services/mcp-server/tests/test_policy\.py$''',
+  '''^services/mcp-server/tests/test_portfolio\.py$''',
+  '''^services/mcp-server/tests/test_tx\.py$''',
+]

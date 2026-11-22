@@ -52,10 +52,10 @@ import tools.stocks as stocks_module
 import tools.wallet as wallet_module
 
 SAMPLE_RAW_PRIVATE_KEY = (
-    "0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318"
+    "0x" + ("ab" * 32)
 )
 SAMPLE_BARE_PRIVATE_KEY = (
-    "4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318"
+    "ab" * 32
 )
 SAMPLE_SEED_PHRASE = (
     "abandon ability able about above absent absorb abstract absurd abuse access accident"
