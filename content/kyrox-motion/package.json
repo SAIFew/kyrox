@@ -1,0 +1,24 @@
+{
+  "name": "kyrox-inside-one-mcp-tool-call",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A Remotion motion-graphics explainer of one KYROX stock lookup.",
+  "scripts": {
+    "dev": "remotion studio src/index.ts",
+    "preview": "remotion studio src/index.ts",
+    "render": "remotion render src/index.ts KyroxInsideOneToolCall out/kyrox-inside-one-mcp-tool-call.mp4 --codec h264",
+    "still": "remotion still src/index.ts KyroxInsideOneToolCall out/preview.png --frame=220"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.373",
+    "@remotion/renderer": "4.0.373",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "remotion": "4.0.373"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "typescript": "5.9.3"
+  }
+}
