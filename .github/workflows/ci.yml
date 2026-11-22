@@ -214,6 +214,41 @@ jobs:
           KYROX_ANVIL_E2E: "1"
         run: pnpm e2e:anvil
 
+  cross-surface:
+    name: Cross-surface runtime invariants
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.21.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Node workspace and Python MCP runtime dependencies
+        run: |
+          pnpm install --frozen-lockfile
+          python -m pip install --upgrade pip
+          python -m pip install "services/mcp-server[dev]"
+
+      - name: Run cross-surface runtime invariant and secret-scanner regression tests
+        env:
+          KYROX_REQUIRE_CROSS_SURFACE_RUNTIME: "1"
+        run: pnpm vitest run packages/core/test/cross-surface-invariants.test.ts packages/core/test/secret-scanner.test.ts
+
   secrets:
     name: Full-history secret scan
     runs-on: ubuntu-latest

@@ -4,80 +4,119 @@
  *
  * Scans:
  * 1. Every tracked file in the current HEAD working tree (`git ls-files`).
- * 2. Every commit diff across the entire reachable Git history (`git log --all -p`).
+ * 2. Every commit diff across the entire reachable Git history (`git rev-list --all`
+ *    with `git show -m --format= --unified=3 --no-color <commit>` so merge commits
+ *    and multi-line assignment contexts are inspected against every parent).
  *
  * Security rules:
  * - Never prints a matched secret value to stdout/stderr or CI logs; reports only
  *   commit SHA, file path, line number, rule ID, and an 8-char SHA-256 fingerprint.
- * - Does not broadly allowlist 64-hex values or private keys.
- * - Enforces a strictly scoped historical exception for the public web3.py / eth-account
- *   documentation example key used as a redaction test input in four Python test files
- *   prior to Stage 4 (matched solely by SHA-256 digest, restricted to the exact frozen
- *   historical commit SHAs and exact test paths, and forbidden in HEAD or any new commit).
+ * - Does not broadly allowlist 64-hex values, private keys, or test files.
+ * - Enforces an exact historical commit -> file-path -> SHA-256 digest allowlist
+ *   strictly for pre-Stage-4 Python redaction test fixtures in the 5 historical commits
+ *   where those files were introduced or merged. Nothing in HEAD or any new commit can
+ *   use the historical exception.
  */
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 
-function sha256Hex(value) {
+export function sha256Hex(value) {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
-function fingerprint(value) {
+export function fingerprint(value) {
   return sha256Hex(value).slice(0, 8);
 }
 
 // Public non-secret 64-hex constants (Base Sepolia genesis hash, checkpoint 61,800,000 hash, and zero bytes32).
-const PUBLIC_CHAIN_CONSTANTS = new Set([
+export const PUBLIC_CHAIN_CONSTANTS = new Set([
   "0000000000000000000000000000000000000000000000000000000000000000",
   "0dcc9e089e30b90ddfc55be9a37dd15bc551aeee999d2e2b51414c54eaf934e4",
   "486d04900ac2e7f6de0d2960cf1aae9095a2a60756e2dcddeac9aca33e26d7ce",
 ]);
 
-// SHA-256 digest of the normalized 64-hex lowercase public web3.py/eth-account doc example key
-// that appeared in 4 Python redaction test files before Stage 4 replaced it with `"ab" * 32`.
-// The raw hex value is intentionally not stored in this scanner.
-const HISTORICAL_WEB3_DOC_EXAMPLE_SHA256 =
-  "bc932a12ef632cd3c0e324a46a400a6a1bd4fb39f65f820b279bb5fb9ee94b76";
+// SHA-256 digest of the normalized bare lowercase 64-character hex public web3.py/eth-account
+// documentation example fixture used as a redaction test input prior to Stage 4.
+export const HISTORICAL_WEB3_DOC_EXAMPLE_SHA256 =
+  "95e82a7ebb036b3c3b3c14120ed7ce5f356ac69348bf38a71e8e117c1ef8c7e0";
 
-const HISTORICAL_ALLOWED_COMMITS = new Set([
-  "d19fee0963858cd1b4d8e2ca77b933cc6d1739d7",
-  "4675bd501a7529a3a499f2cd9e8e94e10cb92b74",
-  "59b4a3a7004dafc0c25756407e98371a3f024fae",
-  "fcd023cb13a0fff2a36e7a241905da9d862b82f9",
-  "cf04939bb17903a6bd9107329077b856e61df06b",
-  "d0edc869085eaf25c8dc8c74ee57b509d84dfa9a",
-  "6965210e301028af5acbde6dc4948a9a26243ccf",
-  "63b2b9c65d2a8e9c61097fdd58f8bf370b3ac4e2",
-  "8e418cc831dd44764e0fa07604f70896c8e0c698",
-  "8cdb4c29a75a8b3e82c0bd7ea7b30640b82e8cdf",
-  "b1620d7167b5927cd85c0890ff80baeed95405ae",
-  "f3e6ff2c37c97f94dc4a2d9bb78f62f136146403",
-  "7128531dc24609bfdd547373efe564b6646b3528",
-  "fd4c9817fb1de47fcd0fa1c17dac87167f26602f",
-  "ecd94349029a84ab6ec4ad1727efef95e7e4e4ad",
-  "cc93e7d58a6b45e497d4950df1bda13efc3f84ef",
-  "18b962d660cfa58ebdffb14cca62ad7a478ecf50",
-  "1bebed73f95a16c55bf8a730bfa4240fc7dbd46f",
+// SHA-256 digests of the two synthetic unit-test token strings (EC PEM header and sk-proj
+// test fixture) in historical commits of test_logging_and_errors.py prior to runtime construction.
+export const HISTORICAL_TEST_PEM_HEADER_SHA256 =
+  "33ea101ddbe7c33be8f143a2779736d0264a4f4c8f323331a4aa9a1f72d8ab2a";
+export const HISTORICAL_TEST_SK_PREFIX_SHA256 =
+  "72a07fb2b04c39bb4f7e63ad8f22210685797354c2a16b1ce01c996ea067652a";
+
+// Exact historical commit -> exact file path -> allowed SHA-256 digest set.
+// Not a cross-product: each historical commit is restricted to the specific file(s) it introduced.
+export const HISTORICAL_COMMIT_PATH_ALLOWLIST = new Map([
+  [
+    "d19fee0260f4581afb8533e707ccb36453d8cbf3",
+    new Map([
+      [
+        "tests/test_logging_and_errors.py",
+        new Set([
+          HISTORICAL_WEB3_DOC_EXAMPLE_SHA256,
+          HISTORICAL_TEST_PEM_HEADER_SHA256,
+          HISTORICAL_TEST_SK_PREFIX_SHA256,
+        ]),
+      ],
+    ]),
+  ],
+  [
+    "4675bd501a7529a3a499f2cd9e8e94e10cb92b74",
+    new Map([
+      ["tests/test_portfolio.py", new Set([HISTORICAL_WEB3_DOC_EXAMPLE_SHA256])],
+      ["tests/test_tx.py", new Set([HISTORICAL_WEB3_DOC_EXAMPLE_SHA256])],
+    ]),
+  ],
+  [
+    "cf04939bb17903a6bd9107329077b856e61df06b",
+    new Map([["tests/test_policy.py", new Set([HISTORICAL_WEB3_DOC_EXAMPLE_SHA256])]]),
+  ],
+  [
+    "fd4c9817fb1de47fcd0fa1c17dac87167f26602f",
+    new Map([
+      [
+        "services/mcp-server/tests/test_logging_and_errors.py",
+        new Set([
+          HISTORICAL_WEB3_DOC_EXAMPLE_SHA256,
+          HISTORICAL_TEST_PEM_HEADER_SHA256,
+          HISTORICAL_TEST_SK_PREFIX_SHA256,
+        ]),
+      ],
+      ["services/mcp-server/tests/test_policy.py", new Set([HISTORICAL_WEB3_DOC_EXAMPLE_SHA256])],
+      [
+        "services/mcp-server/tests/test_portfolio.py",
+        new Set([HISTORICAL_WEB3_DOC_EXAMPLE_SHA256]),
+      ],
+      ["services/mcp-server/tests/test_tx.py", new Set([HISTORICAL_WEB3_DOC_EXAMPLE_SHA256])],
+    ]),
+  ],
+  [
+    "1bebed73f95a16c55bf8a730bfa4240fc7dbd46f",
+    new Map([
+      [
+        "services/mcp-server/tests/test_logging_and_errors.py",
+        new Set([
+          HISTORICAL_WEB3_DOC_EXAMPLE_SHA256,
+          HISTORICAL_TEST_PEM_HEADER_SHA256,
+          HISTORICAL_TEST_SK_PREFIX_SHA256,
+        ]),
+      ],
+      ["services/mcp-server/tests/test_policy.py", new Set([HISTORICAL_WEB3_DOC_EXAMPLE_SHA256])],
+      [
+        "services/mcp-server/tests/test_portfolio.py",
+        new Set([HISTORICAL_WEB3_DOC_EXAMPLE_SHA256]),
+      ],
+      ["services/mcp-server/tests/test_tx.py", new Set([HISTORICAL_WEB3_DOC_EXAMPLE_SHA256])],
+    ]),
+  ],
 ]);
 
-const HISTORICAL_ALLOWED_PATHS = new Set([
-  "tests/test_logging_and_errors.py",
-  "tests/test_policy.py",
-  "tests/test_portfolio.py",
-  "tests/test_tx.py",
-  "services/mcp-server/tests/test_logging_and_errors.py",
-  "services/mcp-server/tests/test_policy.py",
-  "services/mcp-server/tests/test_portfolio.py",
-  "services/mcp-server/tests/test_tx.py",
-]);
-
-const REDACTION_UNIT_TEST_PATHS = new Set([
-  "tests/test_logging_and_errors.py",
-  "services/mcp-server/tests/test_logging_and_errors.py",
-]);
-
-const TOKEN_PATTERNS = [
+export const TOKEN_PATTERNS = [
   { id: "pem-private-key", re: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/g },
   {
     id: "api-key-prefix",
@@ -85,16 +124,40 @@ const TOKEN_PATTERNS = [
   },
 ];
 
-const HEX64_RE = /(?<![A-Fa-f0-9xX])(?:0[xX])?([A-Fa-f0-9]{64})(?![A-Fa-f0-9])/g;
+export const HEX64_RE = /(?<![A-Fa-f0-9xX])(?:0[xX])?([A-Fa-f0-9]{64})(?![A-Fa-f0-9])/g;
+export const PRIVATE_KEY_ASSIGNMENT_RE =
+  /(?:private_?key|priv_?key|signing_?key|secret_?key|deployer_?key)/i;
 
-const findings = [];
+export function isAllowedHistoricalFixture({ scope, commit, filePath, digest }) {
+  if (scope !== "history") {
+    return false;
+  }
+  const commitPaths = HISTORICAL_COMMIT_PATH_ALLOWLIST.get(commit);
+  if (!commitPaths) {
+    return false;
+  }
+  const allowedDigests = commitPaths.get(filePath);
+  if (!allowedDigests) {
+    return false;
+  }
+  return allowedDigests.has(digest);
+}
 
-function checkLine({ scope, commit, filePath, lineNumber, line }) {
+export function checkLine({
+  scope,
+  commit,
+  filePath,
+  lineNumber,
+  line,
+  contextText = line,
+  findings = [],
+}) {
   for (const { id, re } of TOKEN_PATTERNS) {
     re.lastIndex = 0;
     let m;
     while ((m = re.exec(line)) !== null) {
-      if (REDACTION_UNIT_TEST_PATHS.has(filePath)) {
+      const tokenDigest = sha256Hex(m[0]);
+      if (isAllowedHistoricalFixture({ scope, commit, filePath, digest: tokenDigest })) {
         continue;
       }
       findings.push({
@@ -103,7 +166,7 @@ function checkLine({ scope, commit, filePath, lineNumber, line }) {
         filePath,
         lineNumber,
         rule: id,
-        fingerprint: fingerprint(m[0]),
+        fingerprint: tokenDigest.slice(0, 8),
       });
     }
   }
@@ -117,11 +180,7 @@ function checkLine({ scope, commit, filePath, lineNumber, line }) {
     }
     const digest = sha256Hex(bareLower);
     if (digest === HISTORICAL_WEB3_DOC_EXAMPLE_SHA256) {
-      if (
-        scope === "history" &&
-        HISTORICAL_ALLOWED_COMMITS.has(commit) &&
-        HISTORICAL_ALLOWED_PATHS.has(filePath)
-      ) {
+      if (isAllowedHistoricalFixture({ scope, commit, filePath, digest })) {
         continue;
       }
       findings.push({
@@ -135,7 +194,7 @@ function checkLine({ scope, commit, filePath, lineNumber, line }) {
       continue;
     }
 
-    if (/(?:private_?key|priv_?key|signing_?key|secret_?key|deployer_?key)/i.test(line)) {
+    if (PRIVATE_KEY_ASSIGNMENT_RE.test(contextText)) {
       findings.push({
         scope,
         commit,
@@ -146,84 +205,157 @@ function checkLine({ scope, commit, filePath, lineNumber, line }) {
       });
     }
   }
+
+  return findings;
 }
 
-const trackedFiles = execFileSync("git", ["ls-files"], { encoding: "utf8" })
-  .trim()
-  .split("\n")
-  .filter(Boolean);
-
-for (const filePath of trackedFiles) {
-  if (/(^|\/)\.env(\.|$)/.test(filePath) && !filePath.endsWith(".env.example")) {
-    findings.push({
-      scope: "HEAD",
-      commit: "HEAD",
-      filePath,
-      lineNumber: 0,
-      rule: "tracked-env-file",
-      fingerprint: fingerprint(filePath),
-    });
-  }
-}
-
-for (const filePath of trackedFiles) {
-  if (filePath.endsWith(".png") || filePath.endsWith(".ico")) {
-    continue;
-  }
-  const content = readFileSync(filePath, "utf8");
+export function scanFileContent({
+  filePath,
+  content,
+  scope = "HEAD",
+  commit = "HEAD",
+  findings = [],
+}) {
   const lines = content.split("\n");
+  const recentLines = [];
   for (let i = 0; i < lines.length; i++) {
+    recentLines.push(lines[i]);
+    if (recentLines.length > 4) {
+      recentLines.shift();
+    }
     checkLine({
-      scope: "HEAD",
-      commit: "HEAD",
+      scope,
+      commit,
       filePath,
       lineNumber: i + 1,
       line: lines[i],
+      contextText: recentLines.join("\n"),
+      findings,
     });
   }
+  return findings;
 }
 
-const allCommits = execFileSync("git", ["rev-list", "--all"], { encoding: "utf8" })
-  .trim()
-  .split("\n")
-  .filter(Boolean);
-
-for (const commit of allCommits) {
-  const patch = execFileSync("git", ["show", "--format=", "--unified=0", "--no-color", commit], {
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-  });
+export function scanPatchContent({ commit, patch, scope = "history", findings = [] }) {
   let currentFile = "";
   let currentLine = 0;
+  let recentLines = [];
   for (const rawLine of patch.split("\n")) {
     if (rawLine.startsWith("+++ b/")) {
       currentFile = rawLine.slice(6).trim();
+      recentLines = [];
     } else if (rawLine.startsWith("@@ ")) {
       const match = /\+(\d+)/.exec(rawLine);
       currentLine = match ? Number(match[1]) - 1 : 0;
+      recentLines = [];
     } else if (rawLine.startsWith("+") && !rawLine.startsWith("+++")) {
       currentLine += 1;
+      const content = rawLine.slice(1);
+      recentLines.push(content);
+      if (recentLines.length > 4) {
+        recentLines.shift();
+      }
       checkLine({
-        scope: "history",
+        scope,
         commit,
         filePath: currentFile,
         lineNumber: currentLine,
-        line: rawLine.slice(1),
+        line: content,
+        contextText: recentLines.join("\n"),
+        findings,
+      });
+    } else if (rawLine.startsWith(" ")) {
+      currentLine += 1;
+      recentLines.push(rawLine.slice(1));
+      if (recentLines.length > 4) {
+        recentLines.shift();
+      }
+    }
+  }
+  return findings;
+}
+
+export function runFullRepositoryScan({ cwd = process.cwd() } = {}) {
+  const findings = [];
+
+  const trackedFiles = execFileSync("git", ["ls-files"], { cwd, encoding: "utf8" })
+    .trim()
+    .split("\n")
+    .filter(Boolean);
+
+  for (const filePath of trackedFiles) {
+    if (/(^|\/)\.env(\.|$)/.test(filePath) && !filePath.endsWith(".env.example")) {
+      findings.push({
+        scope: "HEAD",
+        commit: "HEAD",
+        filePath,
+        lineNumber: 0,
+        rule: "tracked-env-file",
+        fingerprint: fingerprint(filePath),
       });
     }
   }
-}
 
-if (findings.length > 0) {
-  console.error(`Secret scan failed with ${findings.length} finding(s):`);
-  for (const f of findings) {
-    console.error(
-      `  [${f.scope}] commit=${f.commit} file=${f.filePath}:${f.lineNumber} rule=${f.rule} sha256_prefix=${f.fingerprint}`,
-    );
+  for (const filePath of trackedFiles) {
+    if (filePath.endsWith(".png") || filePath.endsWith(".ico")) {
+      continue;
+    }
+    const content = readFileSync(`${cwd}/${filePath}`, "utf8");
+    scanFileContent({
+      filePath,
+      content,
+      scope: "HEAD",
+      commit: "HEAD",
+      findings,
+    });
   }
-  process.exit(1);
+
+  const allCommits = execFileSync("git", ["rev-list", "--all"], { cwd, encoding: "utf8" })
+    .trim()
+    .split("\n")
+    .filter(Boolean);
+
+  for (const commit of allCommits) {
+    const patch = execFileSync(
+      "git",
+      ["show", "-m", "--format=", "--unified=3", "--no-color", commit],
+      {
+        cwd,
+        encoding: "utf8",
+        maxBuffer: 64 * 1024 * 1024,
+      },
+    );
+    scanPatchContent({
+      commit,
+      patch,
+      scope: "history",
+      findings,
+    });
+  }
+
+  return {
+    trackedFileCount: trackedFiles.length,
+    commitCount: allCommits.length,
+    findings,
+  };
 }
 
-console.log(
-  `Secret scan passed: ${trackedFiles.length} tracked files in HEAD and ${allCommits.length} commits in full history scanned (0 leaks).`,
-);
+const isMainModule =
+  process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isMainModule) {
+  const { trackedFileCount, commitCount, findings } = runFullRepositoryScan();
+  if (findings.length > 0) {
+    console.error(`Secret scan failed with ${findings.length} finding(s):`);
+    for (const f of findings) {
+      console.error(
+        `  [${f.scope}] commit=${f.commit} file=${f.filePath}:${f.lineNumber} rule=${f.rule} sha256_prefix=${f.fingerprint}`,
+      );
+    }
+    process.exit(1);
+  }
+
+  console.log(
+    `Secret scan passed: ${trackedFileCount} tracked files in HEAD and ${commitCount} commits in full history scanned (0 leaks).`,
+  );
+}
