@@ -40,3 +40,15 @@ logs/
 Thumbs.db
 .idea/
 .vscode/
+
+# Local Anvil rehearsal output — never commit
+deployments/local-anvil.json
+
+# Deployment planning artifact — never treat as a live manifest
+deployments/base-sepolia.proposed.json
+deployments/base-sepolia.deployment-evidence.json
+deployments/base-sepolia.verified-pending.json
+
+# Playwright artifacts
+apps/web/test-results/
+apps/web/playwright-report/

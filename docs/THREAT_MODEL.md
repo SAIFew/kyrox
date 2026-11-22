@@ -60,7 +60,7 @@ of scope.
 | T-14 | PII leakage                     | Analytics, logs, Sentry events             | Privacy harm                 | Scrub wallets/emails; retention policy                   | Planned  |
 | T-15 | Supply-chain compromise         | Malicious npm or Foundry dependency        | Code execution               | Lockfile, pinned versions, review, CI                    | Partial  |
 
-## 5. Phase 0 controls already in place
+## 5. Controls in place
 
 - Separate repository and workspace boundaries.
 - Strict TypeScript and CI gates.
@@ -68,6 +68,25 @@ of scope.
 - Unpopulated Sepolia manifest; no mainnet addresses.
 - Environment template with names only; no credentials.
 - ADRs recording the no-execution, freshness, and isolation rules.
+- Integer-only quote math on both sides, with floor rounding and shared golden
+  vectors (T-02, T-03).
+- Original `sourceUpdatedAt` and `roundId` stored on-chain; a separate
+  `publishedAt` prevents timestamp laundering.
+- Round monotonicity and non-decreasing source timestamps block replay.
+- Per-asset freshness bounds; a 24/5 feed that stops advancing becomes stale.
+- `EXCHANGE_ROLE`-gated token mint/burn with no unrestricted mint path.
+- `whenNotPaused` plus `nonReentrant` on both trade directions; pauser role
+  separated from admin.
+- Feed-independent price interface so one global feed assumption is impossible.
+- Mandatory price bands and an optional deviation guard on publication.
+- Stale publications rejected; frozen assets recoverable only while paused.
+- Trade deadlines and delivered-amount verification on both entry points.
+- Tokens can only burn their own balance (`from == msg.sender`).
+- Chainlink reads are pinned to Base Mainnet and validated for code, description,
+  decimals, round completeness, and timestamps.
+- Observations persist the original source timestamp separately from retrieval.
+- Publication and intent preparation are unsigned-only; no key material exists in
+  either service.
 
 ## 6. Residual risks
 
