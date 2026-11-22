@@ -1,10 +1,14 @@
 // Static marketing-site validation. Run against a static server for `out/`.
 // Usage: node apps/marketing/scripts/validate.mjs [baseUrl]
 import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { chromium } from "@playwright/test";
 
 const base = process.argv[2] ?? "http://127.0.0.1:4173";
-const SHOTS = "/Users/saif/Documents/Windows Migration/Projects/kyrox-app-backups/marketing-shots";
+const SHOTS =
+  process.env.KYROX_MARKETING_SHOTS_DIR ??
+  process.argv[3] ??
+  path.resolve(process.cwd(), "apps/marketing/.validation");
 const WIDTHS = [320, 375, 430, 768, 1024, 1440];
 mkdirSync(SHOTS, { recursive: true });
 
