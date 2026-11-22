@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=77.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kyrox-mcp"
+version = "0.1.0"
+description = "Non-custodial Model Context Protocol (MCP) server for AI agents working with tokenized stocks on Base Sepolia testnet (chainId: 84532)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [
+    { name = "KYROX Contributors" },
+]
+keywords = [
+    "mcp",
+    "model-context-protocol",
+    "base-sepolia",
+    "erc20",
+    "tokenized-stocks",
+    "web3",
+    "non-custodial",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "mcp[cli]>=1.28,<2",
+    "web3>=8.0,<9",
+    "requests>=2.32,<3",
+    "python-dotenv>=1.0,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0,<10",
+]
+
+[project.scripts]
+kyrox-mcp = "server:main"
+
+[project.urls]
+Homepage = "https://github.com/SAIFew/kyrox-mcp"
+Repository = "https://github.com/SAIFew/kyrox-mcp.git"
+Security = "https://github.com/SAIFew/kyrox-mcp/blob/main/SECURITY.md"
+
+[tool.setuptools]
+py-modules = ["server"]
+packages = ["tools", "data"]
+include-package-data = true
+
+[tool.setuptools.package-data]
+data = ["stocks.json", "README.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
