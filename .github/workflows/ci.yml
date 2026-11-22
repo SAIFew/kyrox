@@ -45,11 +45,45 @@ jobs:
       - name: Type-check
         run: pnpm typecheck
 
-      - name: Test
+      - name: Test (unit and cross-surface invariants)
         run: pnpm test
 
-      - name: Build
+      - name: Build consumer web app
         run: pnpm build
+
+      - name: Build static marketing app
+        run: pnpm build:marketing
+
+  python:
+    name: Python MCP (${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    defaults:
+      run:
+        working-directory: services/mcp-server
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package and dev dependencies
+        run: |
+          python -m pip install --upgrade pip build
+          python -m pip install ".[dev]"
+          python -m pip check
+
+      - name: Run pytest suite
+        run: python -m pytest -q
+
+      - name: Build wheel and sdist and verify isolated installation
+        run: python ../../scripts/verify-mcp-package.py
 
   contracts:
     name: Foundry format, build, test
@@ -64,6 +98,13 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
 
+      - name: Verify contract sources exist
+        run: |
+          test -f src/KyroxExchange.sol
+          test -f src/TestStock.sol
+          test -f src/TestUSDC.sol
+          test -f test/KyroxExchange.t.sol
+
       - name: Install pinned Solidity dependencies
         run: |
           if [ ! -d lib/openzeppelin-contracts ] || [ ! -d lib/forge-std ]; then
@@ -71,12 +112,121 @@ jobs:
             forge install foundry-rs/forge-std@v1.17.0 --no-git
           fi
 
-      - name: Format, build and test when sources exist
+      - name: Format, build and test
         run: |
-          if find src test -name '*.sol' -print -quit | grep -q .; then
-            forge fmt --check
-            forge build --sizes
-            forge test -vvv
-          else
-            echo "No Solidity sources yet (Phase 0)."
-          fi
+          forge fmt --check
+          forge build --sizes
+          forge test -vvv
+
+  content:
+    name: Standalone content projects
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Validate kyrox-product-film (npm ci + tsc)
+        working-directory: content/kyrox-product-film
+        run: |
+          npm ci
+          npx tsc --noEmit
+          python3 -m py_compile assets/generate_score.py
+
+      - name: Validate kyrox-motion (npm ci + tsc)
+        working-directory: content/kyrox-motion
+        run: |
+          npm ci
+          npx tsc --noEmit
+
+      - name: Validate day-5-carousel and day-6-architecture scripts and assets
+        run: |
+          python3 -m py_compile content/day-5-carousel/build.py content/day-5-carousel/render_from_pdf.py content/day-5-carousel/render_png.py content/day-6-architecture/render_architecture.py
+          python3 -c "import xml.etree.ElementTree as ET; ET.parse('content/day-6-architecture/how-kyrox-works.svg'); ET.parse('content/day-5-carousel/v2/assets/mark.svg')"
+
+  integration:
+    name: PostgreSQL and Anvil integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: kyrox_test
+          POSTGRES_PASSWORD: kyrox_test_password
+          POSTGRES_DB: kyrox_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U kyrox_test -d kyrox_test"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.21.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Foundry (forge and anvil)
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Compile contracts for Anvil E2E suites
+        working-directory: packages/contracts
+        run: |
+          forge install OpenZeppelin/openzeppelin-contracts@v5.6.1 --no-git
+          forge install foundry-rs/forge-std@v1.17.0 --no-git
+          forge build
+
+      - name: Run PostgreSQL observation store integration tests (9 tests)
+        env:
+          KYROX_TEST_DATABASE_URL: postgres://kyrox_test:kyrox_test_password@127.0.0.1:5432/kyrox_test
+          DATABASE_URL: postgres://kyrox_test:kyrox_test_password@127.0.0.1:5432/kyrox_test
+          DIRECT_DATABASE_URL: postgres://kyrox_test:kyrox_test_password@127.0.0.1:5432/kyrox_test
+        run: pnpm test:postgres
+
+      - name: Run PostgreSQL + Anvil publication E2E rehearsal (1 test)
+        env:
+          KYROX_PUBLICATION_E2E: "1"
+          KYROX_TEST_DATABASE_URL: postgres://kyrox_test:kyrox_test_password@127.0.0.1:5432/kyrox_test
+          DATABASE_URL: postgres://kyrox_test:kyrox_test_password@127.0.0.1:5432/kyrox_test
+          DIRECT_DATABASE_URL: postgres://kyrox_test:kyrox_test_password@127.0.0.1:5432/kyrox_test
+        run: pnpm vitest run services/price/test/publication.e2e.test.ts
+
+      - name: Run Anvil trade-intent E2E suite (1 test)
+        env:
+          KYROX_ANVIL_E2E: "1"
+        run: pnpm e2e:anvil
+
+  secrets:
+    name: Full-history secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Run full-history and working-tree secret scanner
+        run: node scripts/scan-secrets.mjs
