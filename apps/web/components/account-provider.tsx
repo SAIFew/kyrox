@@ -331,6 +331,20 @@ function AuthModal() {
     if (authOpen) setHasWallet(ethereum() !== null);
   }, [authOpen]);
 
+  useEffect(() => {
+    if (!authOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeAuth();
+    };
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [authOpen, closeAuth]);
+
   if (!authOpen) return null;
 
   return (
