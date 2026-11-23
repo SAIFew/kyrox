@@ -32,6 +32,14 @@ export async function GET() {
           : "Latest persisted oracle observations.",
       },
       {
+        id: "database",
+        label: "Database & session store",
+        status: demo ? "not-configured" : "operational",
+        detail: demo
+          ? "Preview accounts use signed HttpOnly cookies. No PostgreSQL is attached to this deployment."
+          : "PostgreSQL-backed sessions, quotes, and intents.",
+      },
+      {
         id: "contracts",
         label: "Base Sepolia contracts",
         status: demo ? "not-deployed" : "operational",

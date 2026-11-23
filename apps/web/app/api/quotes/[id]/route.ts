@@ -5,7 +5,16 @@ import { quoteSimulationFlags } from "@/lib/server/labels";
 import { quoteById } from "@/lib/server/quotes";
 import { fromBaseUnits } from "@kyrox/core";
 
+import { isDemoMode } from "@/lib/demo/mode";
+
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+  if (isDemoMode()) {
+    return error(
+      "Preview quotes are signed and short-lived; they are not persisted for lookup. Request a new quote.",
+      404,
+      "not_persisted",
+    );
+  }
   const session = await sessionFromCookies(authStore());
   if (session === null) return error("Authentication required.", 401, "auth");
   const env = environment();

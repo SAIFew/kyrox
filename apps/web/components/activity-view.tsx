@@ -106,7 +106,7 @@ export function ActivityList({
 }
 
 export function ActivityView() {
-  const { ready, session, activity, openAuth, environment } = useAccount();
+  const { ready, session, activity, openAuth, environment, error: accountError } = useAccount();
   const [filter, setFilter] = useState<"all" | "buy" | "sell">("all");
 
   const filtered = useMemo(
@@ -181,6 +181,8 @@ export function ActivityView() {
           <span className="muted small">{activity.length} records</span>
         </div>
       </header>
+
+      {accountError.length > 0 && <div className="callout callout-danger">{accountError}</div>}
 
       <div className="stat-row">
         <div className="stat-tile">

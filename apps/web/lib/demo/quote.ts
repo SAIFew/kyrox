@@ -6,6 +6,7 @@ import {
   createQuote,
   evaluateTradePolicy,
   fromBaseUnits,
+  quoteNotionalUsdc,
   type AssetDefinition,
   type PriceBounds,
 } from "@kyrox/core";
@@ -149,9 +150,17 @@ export function createDemoQuote(input: {
   );
   if (!decision.allowed) {
     const first = decision.violations[0];
+    const notional = fromBaseUnits(quoteNotionalUsdc(quote), 6);
+    const friendly: Partial<Record<string, string>> = {
+      TRADE_BELOW_MINIMUM: `Minimum order is ${fromBaseUnits(TESTNET_TRADE_POLICY.minTradeUsdc, 6)} tUSDC. This order is ${notional} tUSDC.`,
+      TRADE_ABOVE_MAXIMUM: `Maximum order is ${fromBaseUnits(TESTNET_TRADE_POLICY.maxTradeUsdc, 6)} tUSDC. This order is ${notional} tUSDC.`,
+      DAILY_LIMIT_EXCEEDED: `This order would exceed the ${fromBaseUnits(TESTNET_TRADE_POLICY.dailyLimitUsdc, 6)} tUSDC daily limit.`,
+    };
     throw new DemoQuoteError(
       first?.code.toLowerCase() ?? "policy",
-      first?.message ?? "Trade policy rejected the order.",
+      first === undefined
+        ? "Trade policy rejected the order."
+        : (friendly[first.code] ?? first.message),
     );
   }
   const quoteId = `${now.toString(36)}_${Math.random().toString(36).slice(2, 10)}`;

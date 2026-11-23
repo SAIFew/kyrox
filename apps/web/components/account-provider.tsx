@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -19,6 +20,15 @@ import type {
 } from "../lib/market-types";
 import { api, ApiError } from "../lib/api";
 import { shortAddress } from "../lib/format";
+import {
+  BASE_SEPOLIA_CHAIN_ID,
+  connectWallet,
+  ensureChain,
+  getChainId,
+  isBaseSepolia,
+  revokeWalletPermissions,
+  type EthereumProvider,
+} from "../lib/wallet";
 import { ArrowUpRight, CheckIcon, CloseIcon, ShieldIcon, SparkIcon, WalletIcon } from "./icons";
 
 interface SessionResponse {
@@ -32,6 +42,8 @@ interface AccountContextValue {
   environment: EnvironmentInfo | null;
   portfolio: PortfolioPayload | null;
   activity: ActivityItem[];
+  wallet: { address: `0x${string}`; chainId: number } | null;
+  walletOnBase: boolean;
   busy: string;
   error: string;
   authOpen: boolean;
@@ -52,10 +64,6 @@ export function useAccount(): AccountContextValue {
   return context;
 }
 
-interface EthereumProvider {
-  request(args: { method: string; params?: unknown[] | object }): Promise<unknown>;
-}
-
 function ethereum(): EthereumProvider | null {
   if (typeof window === "undefined") return null;
   return (window as Window & { ethereum?: EthereumProvider }).ethereum ?? null;
@@ -67,9 +75,11 @@ export function AccountProvider({ children }: { children: ReactNode }) {
   const [environment, setEnvironment] = useState<EnvironmentInfo | null>(null);
   const [portfolio, setPortfolio] = useState<PortfolioPayload | null>(null);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
+  const [wallet, setWallet] = useState<{ address: `0x${string}`; chainId: number } | null>(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [authOpen, setAuthOpen] = useState(false);
+  const signingOut = useRef(false);
 
   const loadAccountData = useCallback(async (active: boolean) => {
     if (!active) {
@@ -81,8 +91,24 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       api<{ portfolio: PortfolioPayload }>("/api/portfolio"),
       api<{ activity: ActivityItem[] }>("/api/activity"),
     ]);
-    if (portfolioResult.status === "fulfilled") setPortfolio(portfolioResult.value.portfolio);
-    if (activityResult.status === "fulfilled") setActivity(activityResult.value.activity);
+    if (portfolioResult.status === "fulfilled") {
+      setPortfolio(portfolioResult.value.portfolio);
+    } else {
+      setError(
+        portfolioResult.reason instanceof Error
+          ? portfolioResult.reason.message
+          : "Portfolio is unavailable.",
+      );
+    }
+    if (activityResult.status === "fulfilled") {
+      setActivity(activityResult.value.activity);
+    } else {
+      setError(
+        activityResult.reason instanceof Error
+          ? activityResult.reason.message
+          : "Activity is unavailable.",
+      );
+    }
   }, []);
 
   const refreshAll = useCallback(async () => {
@@ -90,8 +116,8 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       const response = await api<SessionResponse>("/api/auth/session");
       setEnvironment(response.environment);
       setSession(response.session);
-      await loadAccountData(response.session !== null);
       setError("");
+      await loadAccountData(response.session !== null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not reach the KYROX API.");
     } finally {
@@ -102,6 +128,73 @@ export function AccountProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void refreshAll();
   }, [refreshAll]);
+
+  const signOut = useCallback(async () => {
+    if (signingOut.current) return;
+    signingOut.current = true;
+    setBusy("signout");
+    try {
+      await revokeWalletPermissions();
+      await fetch("/api/auth/session", { method: "DELETE" });
+      setSession(null);
+      setPortfolio(null);
+      setActivity([]);
+      setWallet(null);
+    } finally {
+      signingOut.current = false;
+      setBusy("");
+    }
+  }, []);
+
+  const syncWallet = useCallback(async () => {
+    const eth = ethereum();
+    if (eth === null) {
+      setWallet(null);
+      return;
+    }
+    try {
+      const accounts = (await eth.request({ method: "eth_accounts" })) as string[];
+      const address = accounts[0];
+      if (address === undefined) {
+        setWallet(null);
+        return;
+      }
+      const chainId = await getChainId(eth);
+      setWallet({ address: address as `0x${string}`, chainId });
+    } catch {
+      setWallet(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    void syncWallet();
+  }, [syncWallet, session?.address]);
+
+  useEffect(() => {
+    const eth = ethereum();
+    if (eth?.on === undefined) return;
+    const onAccounts = (accounts: unknown) => {
+      const list = Array.isArray(accounts) ? accounts.map(String) : [];
+      if (list.length === 0) setWallet(null);
+      void syncWallet();
+      if (
+        session !== null &&
+        !list.some((account) => account.toLowerCase() === session.address.toLowerCase())
+      ) {
+        void signOut();
+      }
+    };
+    const onChain = (chainId: unknown) => {
+      const id = Number(chainId);
+      setWallet((current) => (current === null ? null : { ...current, chainId: id }));
+    };
+    eth.on("accountsChanged", onAccounts);
+    eth.on("chainChanged", onChain);
+    return () => {
+      eth.removeListener?.("accountsChanged", onAccounts);
+      eth.removeListener?.("chainChanged", onChain);
+    };
+  }, [session, signOut, syncWallet]);
 
   const signInDemo = useCallback(async () => {
     setBusy("demo");
@@ -136,9 +229,10 @@ export function AccountProvider({ children }: { children: ReactNode }) {
           "No injected wallet detected. Install a browser wallet, or continue with the preview account.",
         );
       }
-      const accounts = (await eth.request({ method: "eth_requestAccounts" })) as string[];
-      const address = accounts[0];
-      if (address === undefined) throw new Error("The wallet returned no account.");
+      const connected = await connectWallet();
+      const chainId = await ensureChain();
+      const address = connected.address;
+      setWallet({ address, chainId });
 
       const nonceResponse = await fetch("/api/auth/nonce", {
         method: "POST",
@@ -173,18 +267,6 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     }
   }, [refreshAll]);
 
-  const signOut = useCallback(async () => {
-    setBusy("signout");
-    try {
-      await fetch("/api/auth/session", { method: "DELETE" });
-      setSession(null);
-      setPortfolio(null);
-      setActivity([]);
-    } finally {
-      setBusy("");
-    }
-  }, []);
-
   const value = useMemo<AccountContextValue>(
     () => ({
       ready,
@@ -192,10 +274,15 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       environment,
       portfolio,
       activity,
+      wallet,
+      walletOnBase: wallet !== null && isBaseSepolia(wallet.chainId),
       busy,
       error,
       authOpen,
-      openAuth: () => setAuthOpen(true),
+      openAuth: () => {
+        setError("");
+        setAuthOpen(true);
+      },
       closeAuth: () => setAuthOpen(false),
       clearError: () => setError(""),
       refreshAll,
@@ -209,6 +296,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       environment,
       portfolio,
       activity,
+      wallet,
       busy,
       error,
       authOpen,
@@ -228,7 +316,8 @@ export function AccountProvider({ children }: { children: ReactNode }) {
 }
 
 function AuthModal() {
-  const { authOpen, closeAuth, signInDemo, signInWallet, busy, error, environment } = useAccount();
+  const { authOpen, closeAuth, signInDemo, signInWallet, busy, error, environment, wallet } =
+    useAccount();
   const [hasWallet, setHasWallet] = useState(false);
 
   useEffect(() => {
@@ -257,6 +346,22 @@ function AuthModal() {
           KYROX never holds your keys. Access is proven with a wallet signature, and every
           transaction is authorised by you.
         </p>
+
+        <div className="auth-network">
+          <span
+            className={`status-light ${
+              wallet === null ? "off" : isBaseSepolia(wallet.chainId) ? "ok" : "warn"
+            }`}
+          />
+          <span>
+            {wallet === null
+              ? "No wallet connected in this browser"
+              : isBaseSepolia(wallet.chainId)
+                ? `Wallet network · Base Sepolia (${BASE_SEPOLIA_CHAIN_ID})`
+                : `Wallet network · chain ${wallet.chainId} — switch required`}
+          </span>
+          {wallet !== null && <code>{shortAddress(wallet.address)}</code>}
+        </div>
 
         {environment?.mode === "demo" && (
           <div className="callout callout-warn">
@@ -299,7 +404,9 @@ function AuthModal() {
             <strong>{busy === "wallet" ? "Waiting for wallet…" : "Connect wallet"}</strong>
             <small>
               {hasWallet
-                ? "Sign a message to prove ownership · Base Sepolia"
+                ? wallet !== null && !isBaseSepolia(wallet.chainId)
+                  ? "Switch to Base Sepolia and sign a message to prove ownership"
+                  : "Sign a message to prove ownership · Base Sepolia"
                 : "No injected wallet detected in this browser"}
             </small>
           </span>
@@ -322,7 +429,7 @@ function AuthModal() {
 }
 
 export function ConnectButton() {
-  const { session, openAuth, signOut, busy } = useAccount();
+  const { session, openAuth, signOut, busy, wallet } = useAccount();
 
   if (session === null) {
     return (
@@ -333,11 +440,26 @@ export function ConnectButton() {
     );
   }
 
+  const networkMatch =
+    wallet !== null && wallet.address.toLowerCase() === session.address.toLowerCase();
+
   return (
-    <div className="account-chip">
+    <div className={`account-chip ${networkMatch ? "has-network" : ""}`}>
       <span className={`account-dot ${session.demo ? "demo" : "live"}`} />
       <span className="account-address">{shortAddress(session.address)}</span>
       {session.demo && <span className="account-tag">demo</span>}
+      {wallet !== null && wallet.address.toLowerCase() === session.address.toLowerCase() && (
+        <span
+          className={`account-network ${isBaseSepolia(wallet.chainId) ? "ok" : "warn"}`}
+          title={
+            isBaseSepolia(wallet.chainId)
+              ? "Base Sepolia · 84532"
+              : `Wallet on chain ${wallet.chainId}`
+          }
+        >
+          {isBaseSepolia(wallet.chainId) ? "Base" : `Chain ${wallet.chainId}`}
+        </span>
+      )}
       <button
         className="account-signout"
         onClick={() => void signOut()}

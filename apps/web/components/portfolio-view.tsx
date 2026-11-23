@@ -87,7 +87,16 @@ function Donut({
 }
 
 export function PortfolioView() {
-  const { ready, session, environment, portfolio, activity, openAuth, refreshAll } = useAccount();
+  const {
+    ready,
+    session,
+    environment,
+    portfolio,
+    activity,
+    openAuth,
+    refreshAll,
+    error: accountError,
+  } = useAccount();
   const [localBusy, setLocalBusy] = useState("");
   const [error, setError] = useState("");
 
@@ -241,7 +250,9 @@ export function PortfolioView() {
         </div>
       </header>
 
-      {error.length > 0 && <div className="callout callout-danger">{error}</div>}
+      {(error.length > 0 || accountError.length > 0) && (
+        <div className="callout callout-danger">{error || accountError}</div>
+      )}
 
       <section className="portfolio-hero">
         <div className="portfolio-value">
