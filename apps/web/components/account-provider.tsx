@@ -80,6 +80,11 @@ export function AccountProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState("");
   const [authOpen, setAuthOpen] = useState(false);
   const signingOut = useRef(false);
+  const sessionRef = useRef<SessionPayload | null>(null);
+
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
 
   const loadAccountData = useCallback(async (active: boolean) => {
     if (!active) {
@@ -132,6 +137,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
   const signOut = useCallback(async () => {
     if (signingOut.current) return;
     signingOut.current = true;
+    sessionRef.current = null;
     setBusy("signout");
     try {
       await revokeWalletPermissions();
@@ -177,9 +183,10 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       const list = Array.isArray(accounts) ? accounts.map(String) : [];
       if (list.length === 0) setWallet(null);
       void syncWallet();
+      const current = sessionRef.current;
       if (
-        session !== null &&
-        !list.some((account) => account.toLowerCase() === session.address.toLowerCase())
+        current !== null &&
+        !list.some((account) => account.toLowerCase() === current.address.toLowerCase())
       ) {
         void signOut();
       }
@@ -448,18 +455,20 @@ export function ConnectButton() {
       <span className={`account-dot ${session.demo ? "demo" : "live"}`} />
       <span className="account-address">{shortAddress(session.address)}</span>
       {session.demo && <span className="account-tag">demo</span>}
-      {wallet !== null && wallet.address.toLowerCase() === session.address.toLowerCase() && (
-        <span
-          className={`account-network ${isBaseSepolia(wallet.chainId) ? "ok" : "warn"}`}
-          title={
-            isBaseSepolia(wallet.chainId)
-              ? "Base Sepolia · 84532"
-              : `Wallet on chain ${wallet.chainId}`
-          }
-        >
-          {isBaseSepolia(wallet.chainId) ? "Base" : `Chain ${wallet.chainId}`}
-        </span>
-      )}
+      {networkMatch &&
+        (isBaseSepolia(wallet.chainId) ? (
+          <span className="account-network ok" title="Base Sepolia · 84532">
+            Base
+          </span>
+        ) : (
+          <button
+            className="account-network warn"
+            onClick={() => void ensureChain()}
+            title={`Wallet on chain ${wallet.chainId}. Switch to Base Sepolia (84532).`}
+          >
+            Switch
+          </button>
+        ))}
       <button
         className="account-signout"
         onClick={() => void signOut()}

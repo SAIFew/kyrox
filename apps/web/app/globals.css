@@ -3122,6 +3122,8 @@ pre,
 
 .modal {
   animation: rise 0.22s ease;
+  max-height: calc(100vh - 36px);
+  overflow-y: auto;
   background:
     radial-gradient(500px 240px at 50% 0%, rgba(124, 240, 193, 0.08), transparent 70%), #0b0f15;
   border: 1px solid var(--line-strong);
