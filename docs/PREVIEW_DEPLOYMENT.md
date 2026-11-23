@@ -51,15 +51,22 @@ commit author must be a member of the Vercel account for Git-attributed deployme
 
 ## Custom domain
 
-The Vercel account currently has no verified custom domain. `kyrox.io` is registered at Hostinger
-and renews through 2027, but its nameservers currently point to `ns1.dns-expired.com` /
-`ns2.dns-expired.com`, so it does not resolve. If you control it:
+`kyrox.io` and `www.kyrox.io` are attached to the Vercel project and ownership is verified, but the
+domain is **misconfigured at the DNS provider**. It is registered at Hostinger (expiry 2027-10-27)
+and currently delegates to `ns1.dns-expired.com` / `ns2.dns-expired.com`, with an apex `A` record of
+`2.57.91.92`. That is not Vercel, so the domain does not serve the app yet.
 
-1. Restore DNS in Hostinger (renew the hosting/DNS service if required).
-2. In Vercel → Project `kyrox` → Settings → Domains, add `kyrox.io` and `www.kyrox.io`.
-3. Either set the Hostinger nameservers to `ns1.vercel-dns.com` and `ns2.vercel-dns.com`, or add
-   `A @ → 76.76.21.21` and `CNAME www → cname.vercel-dns.com`.
-4. Update `NEXT_PUBLIC_APP_URL` to `https://kyrox.io` and redeploy.
+Required action (the owner must do this in Hostinger or wherever DNS is managed):
+
+1. Restore/repair DNS for `kyrox.io` (the current delegation is an expired-DNS service).
+2. Either delegate to the Vercel nameservers (`ns1.vercel-dns.com`, `ns2.vercel-dns.com`), or create:
+   - `A @ → 216.198.79.1`
+   - `A @ → 64.29.17.1`
+   - `CNAME www → 734ed17315427d40.vercel-dns-017.com.`
+3. Once DNS resolves, set `NEXT_PUBLIC_APP_URL=https://kyrox.io` in Vercel and redeploy.
+
+Vercel's current diagnostic: `misconfigured: true`; recommended records as above. No domain purchase
+is required if this domain belongs to you.
 
 `kyrox.app` and `kyrox.finance` had no RDAP record at the time of deployment and appear to be
 available for registration if `kyrox.io` is not yours.
