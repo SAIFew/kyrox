@@ -258,7 +258,7 @@ function AuthModal() {
           transaction is authorised by you.
         </p>
 
-        {environment?.simulated === true && (
+        {environment?.mode === "demo" && (
           <div className="callout callout-warn">
             <SparkIcon size={16} />
             <p>

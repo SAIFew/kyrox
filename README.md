@@ -12,6 +12,8 @@ Unified monorepo for the **KYROX** Base Sepolia testnet platform: consumer web a
 
 ## Public Preview (deployed)
 
+**Production URL:** <https://kyrox-dun.vercel.app> — Vercel project `kyrox` (root directory `apps/web`, Node 24, pnpm workspace).
+
 The consumer application ships with a first-class **simulated preview** mode. It runs without PostgreSQL, a loopback Anvil node, or a deployed exchange, and every price, balance, and fill is labelled `simulated` in the interface.
 
 - **Market data:** deterministic, time-based reference curves for `tAAPL`, `tTSLA`, and `tNVDA`. No oracle is contacted. History, 24h ranges, volume, and freshness are generated locally.

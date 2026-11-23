@@ -222,8 +222,16 @@ export function TradePanel({ asset, snapshot }: { asset: MarketAsset; snapshot: 
     }
   }
 
-  const simulated = environment?.simulated ?? true;
-  const notDeployed = environment !== null && environment.contracts === "not-deployed";
+  const preview = environment?.mode === "demo";
+  const canExecuteOnChain =
+    environment !== null &&
+    environment.mode !== "demo" &&
+    (environment.contracts === "deployed" || environment.contracts === "local");
+  const venueLabel = preview
+    ? "simulated venue"
+    : environment?.mode === "local-anvil"
+      ? "local Anvil"
+      : "on-chain";
 
   if (session === null) {
     return (
@@ -256,9 +264,7 @@ export function TradePanel({ asset, snapshot }: { asset: MarketAsset; snapshot: 
     <aside className="trade-panel panel" id="trade">
       <div className="trade-head">
         <h2>Trade {asset.symbol}</h2>
-        <span className={simulated ? "sim-badge" : "sim-badge live"}>
-          {simulated ? "simulated venue" : "on-chain"}
-        </span>
+        <span className={preview ? "sim-badge" : "sim-badge live"}>{venueLabel}</span>
       </div>
 
       {stage !== "done" && (
@@ -408,7 +414,7 @@ export function TradePanel({ asset, snapshot }: { asset: MarketAsset; snapshot: 
                 </div>
               </dl>
 
-              {simulated ? (
+              {preview ? (
                 <div className="callout callout-warn compact">
                   <InfoIcon size={15} />
                   <p>
@@ -432,7 +438,7 @@ export function TradePanel({ asset, snapshot }: { asset: MarketAsset; snapshot: 
                 <button className="button button-ghost" onClick={resetFlow} disabled={busy !== ""}>
                   Back
                 </button>
-                {simulated || notDeployed ? (
+                {preview ? (
                   <button
                     className="button button-primary"
                     onClick={() => void executeSimulated()}
@@ -444,9 +450,18 @@ export function TradePanel({ asset, snapshot }: { asset: MarketAsset; snapshot: 
                   <button
                     className="button button-primary"
                     onClick={() => void executeWallet()}
-                    disabled={busy !== "" || expired}
+                    disabled={busy !== "" || expired || !canExecuteOnChain}
+                    title={
+                      canExecuteOnChain
+                        ? undefined
+                        : "On-chain settlement is not deployed in this environment."
+                    }
                   >
-                    {busy === "wallet" ? "Waiting for wallet…" : "Approve in wallet"}
+                    {busy === "wallet"
+                      ? "Waiting for wallet…"
+                      : canExecuteOnChain
+                        ? "Approve in wallet"
+                        : "Settlement not deployed"}
                   </button>
                 )}
               </div>

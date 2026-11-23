@@ -1,0 +1,10 @@
+{
+  "$schema": "https://modelcontextprotocol.io/schema/mcp.json",
+  "_comment": "Read-only KYROX hosted preview bridge. No API key. No signing, sending, transferring, or arbitrary calldata tools are exposed.",
+  "mcpServers": {
+    "kyrox-hosted-preview": {
+      "type": "http",
+      "url": "https://kyrox-dun.vercel.app/api/mcp"
+    }
+  }
+}

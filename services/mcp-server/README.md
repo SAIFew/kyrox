@@ -75,6 +75,17 @@ KYROX never receives private keys, never signs, and never broadcasts.
 
 ---
 
+## 4a. Hosted Preview Bridge (HTTP)
+
+The KYROX web preview exposes a **read-only** MCP endpoint over Streamable HTTP:
+
+- Endpoint: `https://kyrox-dun.vercel.app/api/mcp`
+- Discovery: `GET` the endpoint for server metadata and the tool catalogue.
+- Tools: `kyrox_list_markets`, `kyrox_get_market`, `kyrox_preview_quote`, `kyrox_get_protocol_status`.
+- Boundary: no signing, no sending, no transfers, and no arbitrary calldata. The tools return preview data with explicit `simulated` labels.
+
+A ready-to-use client fragment is available at [`config/hosted-preview.mcp.json`](config/hosted-preview.mcp.json). The hosted bridge is independent of this Python STDIO server: it is useful for remote agents, while `kyrox-mcp` remains the local package for wallet reads, unsigned transaction preparation, simulation, and the deterministic safety policy.
+
 ## 5. Prerequisites
 
 - **Python 3.11+** (64-bit required; verified on **Python 3.13.7 x64**)

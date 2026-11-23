@@ -3593,12 +3593,50 @@ pre,
   }
 
   .market-table {
-    min-width: 480px;
+    min-width: 0;
+    table-layout: fixed;
   }
 
   .market-table th,
   .market-table td {
-    padding: 11px 12px;
+    padding: 10px 7px;
+  }
+
+  .market-table th:nth-child(1),
+  .market-table td:nth-child(1) {
+    width: 46%;
+  }
+
+  .market-table th:nth-child(2),
+  .market-table td:nth-child(2) {
+    width: 26%;
+  }
+
+  .market-table th:nth-child(3),
+  .market-table td:nth-child(3) {
+    width: 17%;
+  }
+
+  .market-table th:nth-child(6),
+  .market-table td:nth-child(6) {
+    width: 32px;
+  }
+
+  .row-action {
+    font-size: 0;
+    gap: 0;
+  }
+
+  .market-cell small {
+    display: none;
+  }
+
+  .table-price {
+    gap: 3px;
+  }
+
+  .table-price small {
+    display: none;
   }
 
   .asset-head {
