@@ -240,8 +240,7 @@ export function MarketDetailView({ symbol }: { symbol: string }) {
             <div>
               <dt>Source updated</dt>
               <dd>
-                {new Date(market.sourceUpdatedAt * 1_000).toISOString()} (
-                {timeAgo(market.sourceUpdatedAt)})
+                {formatUtc(market.sourceUpdatedAt)} ({timeAgo(market.sourceUpdatedAt)})
               </dd>
             </div>
             <div>
