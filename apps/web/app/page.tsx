@@ -1,697 +1,322 @@
-"use client";
+import Link from "next/link";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { encodeFunctionData, formatUnits, parseUnits } from "viem";
+import { HeroMarket, LandingMarkets } from "../components/live-markets";
+import {
+  ArrowRight,
+  ArrowUpRight,
+  ChartIcon,
+  CodeIcon,
+  LayersIcon,
+  LockIcon,
+  ShieldIcon,
+  SparkIcon,
+} from "../components/icons";
 
-import { exactApprovalAmount } from "../lib/approvals";
-import { connectWallet, ensureChain, provider, sendTransaction, signMessage } from "../lib/wallet";
-
-interface AssetView {
-  symbol: string;
-  name: string;
-  stockToken: string;
-  stockDecimals: number;
-  priceUsdc: string | null;
-  sourceUpdatedAt: number | null;
-  observedAt: number | null;
-  fresh: boolean;
-  simulated: boolean;
-}
-
-interface AssetsPayload {
-  assets: AssetView[];
-  settlement: string;
-  exchange: string;
-  mode: "local-anvil" | "base-sepolia";
-  simulated: boolean;
-  walletNetwork: { chainId: number; rpcUrl: string; name: string } | null;
-}
-
-interface PortfolioPayload {
-  settlement: { amount: string; valueUsdc: string | null };
-  positions: Array<{ symbol: string; amount: string; valueUsdc: string | null; stale: boolean }>;
-  totalUsdc: string | null;
-  simulated: boolean;
-  stale: boolean;
-}
-
-interface ActivityItem {
-  id: string;
-  symbol: string;
-  side: "buy" | "sell";
-  amountIn: string;
-  minAmountOut: string;
-  status: "prepared" | "submitted" | "included" | "verified" | "failed" | "reorged";
-  txHash: string | null;
-  createdAt: string;
-}
-
-interface QuoteView {
-  quoteId: string;
-  quoteToken: string;
-  symbol: string;
-  side: "buy" | "sell";
-  priceUsdc: string;
-  amountIn: string;
-  amountOut: string;
-  minAmountOut: string;
-  sourceUpdatedAt: number;
-  expiresAt: number;
-  simulatedPrice: boolean;
-  limits: { minUsdc: string; maxUsdc: string; dailyUsdc: string };
-}
-
-interface IntentView {
-  intentId: string;
-  amountIn: string;
-  to: `0x${string}`;
-  data: `0x${string}`;
-  hash: `0x${string}`;
-  deadline: number;
-}
-
-const ERC20_APPROVE = [
+const STEPS = [
   {
-    type: "function",
-    name: "approve",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "spender", type: "address" },
-      { name: "amount", type: "uint256" },
-    ],
-    outputs: [{ type: "bool" }],
+    step: "01",
+    title: "Read the market",
+    body: "Every instrument shows its reference price, source age, and explicit simulation status. Stale data is never dressed up as fresh.",
+  },
+  {
+    step: "02",
+    title: "Get a deterministic quote",
+    body: "Integer-only maths, floor rounding, slippage bounds, size limits, and freshness checks run before you see a number.",
+  },
+  {
+    step: "03",
+    title: "Review the intent",
+    body: "The exact destination, amount, minimum received, and deadline are prepared for review. Nothing is signed by KYROX.",
+  },
+  {
+    step: "04",
+    title: "Authorise in your wallet",
+    body: "Your wallet is the only signer. The preview venue simulates the fill; a deployed venue would settle on Base Sepolia.",
   },
 ] as const;
 
-const ERC20_CLAIM = [
+const PILLARS = [
   {
-    type: "function",
-    name: "claimWelcome",
-    stateMutability: "nonpayable",
-    inputs: [],
-    outputs: [],
+    icon: ChartIcon,
+    title: "Reference-price venue",
+    body: "No AMM, no routing, no hidden spread. Buy and sell against a published reference price with explicit bounds.",
+  },
+  {
+    icon: ShieldIcon,
+    title: "Policy before execution",
+    body: "Minimum and maximum size, a 5,000 tUSDC daily cap, asset allowlists, pause state, and fresh prices are enforced in code.",
+  },
+  {
+    icon: LockIcon,
+    title: "Non-custodial by construction",
+    body: "No service key can move user funds. The interface prepares; the user authorises. Simulated fills are labelled as such.",
+  },
+  {
+    icon: CodeIcon,
+    title: "Agent-ready boundary",
+    body: "A read-only MCP bridge exposes markets, history, quotes, and status. There is no sign, send, transfer, or arbitrary-calldata tool.",
   },
 ] as const;
 
-function short(address: string): string {
-  return `${address.slice(0, 6)}…${address.slice(-4)}`;
-}
-
-function age(seconds: number | null): string {
-  if (seconds === null) return "—";
-  const diff = Math.max(0, Math.floor(Date.now() / 1000) - seconds);
-  if (diff < 60) return `${diff}s ago`;
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  return `${Math.floor(diff / 3600)}h ago`;
-}
-
-const STATUS_LABEL: Record<ActivityItem["status"], string> = {
-  prepared: "Prepared · not executed",
-  submitted: "Submitted",
-  included: "Included · confirming",
-  verified: "Verified",
-  failed: "Failed",
-  reorged: "Reorged",
-};
+const STATUS = [
+  ["Consumer application", "Live preview", "live"],
+  ["Reference market data", "Simulated feed", "sim"],
+  ["Deterministic quote engine", "Implemented", "live"],
+  ["Agent bridge (MCP)", "Read-only, live", "live"],
+  ["Base Sepolia contracts", "Not deployed", "off"],
+  ["Mainnet trading", "Not available", "off"],
+] as const;
 
 export default function HomePage() {
-  const [assets, setAssets] = useState<AssetsPayload | null>(null);
-  const [session, setSession] = useState<{ address: string } | null>(null);
-  const [account, setAccount] = useState<`0x${string}` | null>(null);
-  const [portfolio, setPortfolio] = useState<PortfolioPayload | null>(null);
-  const [activity, setActivity] = useState<ActivityItem[]>([]);
-  const [selected, setSelected] = useState("tAAPL");
-  const [side, setSide] = useState<"buy" | "sell">("buy");
-  const [amount, setAmount] = useState("");
-  const [slippageBps, setSlippageBps] = useState(50);
-  const [quote, setQuote] = useState<QuoteView | null>(null);
-  const [intent, setIntent] = useState<IntentView | null>(null);
-  const [status, setStatus] = useState<string>("");
-  const [error, setError] = useState<string>("");
-  const [busy, setBusy] = useState<string>("");
-  const [authBusy, setAuthBusy] = useState(false);
-
-  const loadAssets = useCallback(async () => {
-    const response = await fetch("/api/assets", { cache: "no-store" });
-    if (!response.ok) throw new Error("Assets are unavailable.");
-    setAssets((await response.json()) as AssetsPayload);
-  }, []);
-
-  const loadSession = useCallback(async () => {
-    const response = await fetch("/api/auth/session", { cache: "no-store" });
-    const payload = (await response.json()) as { session: { address: string } | null };
-    setSession(payload.session);
-    return payload.session;
-  }, []);
-
-  const loadAccountData = useCallback(async () => {
-    const [portfolioResponse, activityResponse] = await Promise.all([
-      fetch("/api/portfolio", { cache: "no-store" }),
-      fetch("/api/activity", { cache: "no-store" }),
-    ]);
-    if (portfolioResponse.ok) setPortfolio((await portfolioResponse.json()) as PortfolioPayload);
-    if (activityResponse.ok) {
-      const payload = (await activityResponse.json()) as { activity: ActivityItem[] };
-      setActivity(payload.activity);
-    }
-  }, []);
-
-  useEffect(() => {
-    void (async () => {
-      try {
-        await loadAssets();
-        const active = await loadSession();
-        if (active !== null) await loadAccountData();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Application is not configured.");
-      }
-    })();
-  }, [loadAssets, loadSession, loadAccountData]);
-
-  useEffect(() => {
-    if (session === null) return;
-    const timer = setInterval(() => {
-      void loadAccountData();
-    }, 8_000);
-    return () => clearInterval(timer);
-  }, [session, loadAccountData]);
-
-  const asset = useMemo(
-    () => assets?.assets.find((entry) => entry.symbol === selected) ?? null,
-    [assets, selected],
-  );
-  const position = portfolio?.positions.find((entry) => entry.symbol === selected) ?? null;
-
-  async function authenticate() {
-    setError("");
-    setAuthBusy(true);
-    try {
-      const connected = await connectWallet();
-      setAccount(connected.address);
-      if (assets?.walletNetwork) await ensureChain(assets.walletNetwork.rpcUrl);
-      const chainId = Number(await provider().request({ method: "eth_chainId" }));
-      if (chainId !== 84_532) {
-        throw new Error("Wallet is on the wrong network. Switch to Base Sepolia (84532).");
-      }
-
-      const nonceResponse = await fetch("/api/auth/nonce", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ address: connected.address }),
-      });
-      const noncePayload = (await nonceResponse.json()) as { message?: string; error?: string };
-      if (!nonceResponse.ok || noncePayload.message === undefined) {
-        throw new Error(noncePayload.error ?? "Could not start authentication.");
-      }
-      const signature = await signMessage(connected.address, noncePayload.message);
-      const verifyResponse = await fetch("/api/auth/verify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: noncePayload.message, signature }),
-      });
-      const verified = (await verifyResponse.json()) as { error?: string; address?: string };
-      if (!verifyResponse.ok) throw new Error(verified.error ?? "Signature was rejected.");
-      setSession({ address: verified.address ?? connected.address });
-      await loadAccountData();
-      setStatus("Wallet ownership verified.");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Wallet authentication failed.");
-    } finally {
-      setAuthBusy(false);
-    }
-  }
-
-  async function logout() {
-    await fetch("/api/auth/session", { method: "DELETE" });
-    setSession(null);
-    setPortfolio(null);
-    setActivity([]);
-    setQuote(null);
-    setIntent(null);
-    setStatus("");
-  }
-
-  async function requestQuote() {
-    setError("");
-    setQuote(null);
-    setIntent(null);
-    if (amount.trim().length === 0) {
-      setError("Enter an amount.");
-      return;
-    }
-    setBusy("quote");
-    try {
-      const decimals = side === "buy" ? 6 : (asset?.stockDecimals ?? 18);
-      const amountIn = parseUnits(amount.trim(), decimals).toString();
-      const response = await fetch("/api/quotes", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol: selected, side, amountIn, slippageBps }),
-      });
-      const payload = (await response.json()) as QuoteView & { error?: string };
-      if (!response.ok) throw new Error(payload.error ?? "Quote failed.");
-      setQuote(payload);
-      setStatus("Quote prepared by KYROX. Review before preparing a transaction.");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Quote failed.");
-    } finally {
-      setBusy("");
-    }
-  }
-
-  async function prepareTrade() {
-    if (quote === null) return;
-    setError("");
-    setBusy("prepare");
-    try {
-      const response = await fetch("/api/trades/prepare", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ quoteId: quote.quoteId, quoteToken: quote.quoteToken }),
-      });
-      const payload = (await response.json()) as IntentView & { error?: string };
-      if (!response.ok) throw new Error(payload.error ?? "Could not prepare the transaction.");
-      setIntent(payload);
-      setStatus("Unsigned transaction prepared. Nothing has been submitted.");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Preparation failed.");
-    } finally {
-      setBusy("");
-    }
-  }
-
-  async function approveIntent() {
-    if (intent === null || account === null) return;
-    setError("");
-    setBusy("wallet");
-    setStatus("Awaiting wallet approval…");
-    try {
-      if (assets === null) throw new Error("Deployment information is unavailable.");
-      const approvalToken = quote?.side === "sell" ? asset?.stockToken : assets.settlement;
-      if (approvalToken !== undefined) {
-        const approvalAmount = exactApprovalAmount(intent.amountIn);
-        const approvalDecimals = quote?.side === "sell" ? (asset?.stockDecimals ?? 18) : 6;
-        setStatus(
-          `Awaiting wallet approval for exactly ${formatUnits(approvalAmount, approvalDecimals)} ${
-            quote?.side === "sell" ? quote.symbol : "tUSDC"
-          }…`,
-        );
-        await sendTransaction({
-          from: account,
-          to: approvalToken as `0x${string}`,
-          data: encodeFunctionData({
-            abi: ERC20_APPROVE,
-            functionName: "approve",
-            args: [assets.exchange as `0x${string}`, approvalAmount],
-          }),
-        });
-      }
-      const hash = await sendTransaction({
-        from: account,
-        to: intent.to,
-        data: intent.data,
-      });
-      setStatus(`Submitted ${short(hash)}. Waiting for inclusion.`);
-      const response = await fetch("/api/trades/submitted", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ intentId: intent.intentId, txHash: hash }),
-      });
-      if (!response.ok) {
-        const payload = (await response.json()) as { error?: string };
-        throw new Error(payload.error ?? "Submitted transaction could not be recorded.");
-      }
-      setIntent(null);
-      setQuote(null);
-      await loadAccountData();
-      setStatus(
-        "Transaction submitted. Status updates below; an unsigned intent is never counted as executed.",
-      );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "The wallet rejected the transaction.");
-      setStatus("");
-    } finally {
-      setBusy("");
-    }
-  }
-
-  async function faucet() {
-    if (assets === null || account === null) return;
-    setError("");
-    setBusy("faucet");
-    try {
-      const hash = await sendTransaction({
-        from: account,
-        to: assets.settlement as `0x${string}`,
-        data: encodeFunctionData({ abi: ERC20_CLAIM, functionName: "claimWelcome" }),
-      });
-      setStatus(`Faucet transaction ${short(hash)} submitted.`);
-      await loadAccountData();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Faucet request failed.");
-    } finally {
-      setBusy("");
-    }
-  }
-
-  const totalLabel =
-    portfolio === null
-      ? "—"
-      : portfolio.totalUsdc === null
-        ? "Unpriced"
-        : `${Number(portfolio.totalUsdc).toLocaleString(undefined, {
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2,
-          })} tUSDC`;
-
-  const maxAmountLabel = side === "buy" ? "tUSDC" : selected;
-  const available = side === "buy" ? portfolio?.settlement.amount : position?.amount;
-
   return (
-    <main className="shell">
-      <header className="topbar">
-        <div className="brand">
-          <span className="mark">K</span>
-          <div>
-            <p className="brand-name">KYROX</p>
-            <p className="brand-sub">Tokenized equities · testnet</p>
-          </div>
-        </div>
-        <div className="topbar-right">
-          <span className={`env-chip ${assets?.mode === "local-anvil" ? "local" : ""}`}>
-            {assets?.mode === "local-anvil" ? "LOCAL ANVIL · SIMULATED" : "BASE SEPOLIA"}
-          </span>
-          {session === null ? (
-            <button className="button primary" onClick={authenticate} disabled={authBusy}>
-              {authBusy ? "Connecting…" : account ? "Sign in" : "Connect wallet"}
-            </button>
-          ) : (
-            <div className="wallet-chip">
-              <span className="dot" /> {short(session.address)}
-              <button className="link" onClick={logout}>
-                Sign out
-              </button>
-            </div>
-          )}
-        </div>
-      </header>
-
-      {assets?.mode === "local-anvil" && (
-        <div className="notice">
-          Local development environment. Prices are simulated observations, not Chainlink mainnet
-          events. Balances and trades exist only on a disposable Anvil chain.
-        </div>
-      )}
-
-      {error.length > 0 && (
-        <div className="alert" role="alert">
-          {error}
-          <button className="link" onClick={() => setError("")}>
-            Dismiss
-          </button>
-        </div>
-      )}
-
-      <section className="hero">
-        <div>
-          <p className="eyebrow">Portfolio</p>
-          <h1 className="value">{totalLabel}</h1>
-          <p className="muted">
-            {session === null
-              ? "Connect and verify your wallet to view balances."
-              : portfolio?.stale
-                ? "One or more positions have no fresh reference price."
-                : "Valued at the latest verified reference observation."}
-          </p>
-        </div>
-        <div className="hero-actions">
-          <button
-            className="button ghost"
-            onClick={faucet}
-            disabled={session === null || busy === "faucet"}
-          >
-            {busy === "faucet" ? "Requesting…" : "Claim 1,000 test tUSDC"}
-          </button>
-          <button
-            className="button ghost"
-            onClick={() => void loadAccountData()}
-            disabled={session === null}
-          >
-            Refresh
-          </button>
-        </div>
-      </section>
-
-      <div className="grid">
-        <section className="panel portfolio-panel">
-          <div className="panel-head">
-            <h2>Balances</h2>
-            <span className="muted small">{assets?.simulated ? "simulated data" : "onchain"}</span>
-          </div>
-          <div className="balance-row">
-            <span>tUSDC</span>
-            <strong>{portfolio?.settlement.amount ?? "—"}</strong>
-          </div>
-          {assets?.assets.map((entry) => {
-            const holding = portfolio?.positions.find(
-              (position) => position.symbol === entry.symbol,
-            );
-            return (
-              <button
-                key={entry.symbol}
-                className={`asset-row ${selected === entry.symbol ? "selected" : ""}`}
-                onClick={() => {
-                  setSelected(entry.symbol);
-                  setQuote(null);
-                  setIntent(null);
-                  setStatus("");
-                }}
-              >
-                <span className="asset-id">
-                  <span className="asset-symbol">{entry.symbol}</span>
-                  <span className="muted small">{entry.name}</span>
-                </span>
-                <span className="asset-numbers">
-                  <span>{holding?.amount ?? "0"}</span>
-                  <span className="muted small">
-                    {entry.priceUsdc === null
-                      ? "no price"
-                      : `${Number(entry.priceUsdc).toFixed(2)} tUSDC`}
-                  </span>
-                </span>
-              </button>
-            );
-          })}
-          <div className="freshness">
-            <span className={`dot ${asset?.fresh ? "ok" : "warn"}`} />
-            <span>
-              {selected} reference price {asset?.fresh ? "fresh" : "stale or missing"} ·{" "}
-              {age(asset?.sourceUpdatedAt ?? null)}
-              {asset?.simulated ? " · simulated" : ""}
-            </span>
-          </div>
-        </section>
-
-        <section className="panel trade-panel">
-          <div className="panel-head">
-            <h2>Trade</h2>
-            <span className="muted small">Reference-price mint / burn</span>
-          </div>
-          <div className="segmented" role="tablist" aria-label="Trade side">
-            <button
-              className={side === "buy" ? "active" : ""}
-              onClick={() => {
-                setSide("buy");
-                setQuote(null);
-                setIntent(null);
-              }}
-            >
-              Buy
-            </button>
-            <button
-              className={side === "sell" ? "active" : ""}
-              onClick={() => {
-                setSide("sell");
-                setQuote(null);
-                setIntent(null);
-              }}
-            >
-              Sell
-            </button>
-          </div>
-          <label className="field">
-            <span>Amount</span>
-            <div className="input-wrap">
-              <input
-                inputMode="decimal"
-                placeholder="0.00"
-                value={amount}
-                onChange={(event) => {
-                  setAmount(event.target.value);
-                  setQuote(null);
-                  setIntent(null);
-                }}
-              />
-              <span className="unit">{maxAmountLabel}</span>
-            </div>
-            <span className="muted small">Available: {available ?? "—"}</span>
-          </label>
-          <label className="field">
-            <span>Slippage tolerance</span>
-            <select
-              value={slippageBps}
-              onChange={(event) => setSlippageBps(Number(event.target.value))}
-            >
-              <option value={10}>0.10%</option>
-              <option value={50}>0.50%</option>
-              <option value={100}>1.00%</option>
-            </select>
-          </label>
-          <button
-            className="button primary wide"
-            onClick={requestQuote}
-            disabled={session === null || busy !== "" || amount.length === 0}
-          >
-            {busy === "quote" ? "Preparing quote…" : "Get quote"}
-          </button>
-
-          {quote !== null && (
-            <div className="quote-card">
-              <div className="quote-head">
-                <span>Quote</span>
-                <span className="muted small">
-                  expires {new Date(quote.expiresAt * 1000).toLocaleTimeString()}
-                </span>
-              </div>
-              <dl>
-                <div>
-                  <dt>Reference price</dt>
-                  <dd>{Number(quote.priceUsdc).toFixed(2)} tUSDC</dd>
-                </div>
-                <div>
-                  <dt>{side === "buy" ? "Estimated stock" : "Estimated tUSDC"}</dt>
-                  <dd>{quote.amountOut}</dd>
-                </div>
-                <div>
-                  <dt>Minimum received</dt>
-                  <dd>{quote.minAmountOut}</dd>
-                </div>
-                <div>
-                  <dt>Limits</dt>
-                  <dd>
-                    {quote.limits.minUsdc}–{quote.limits.maxUsdc} tUSDC
-                  </dd>
-                </div>
-              </dl>
-              {quote.simulatedPrice && <p className="tag">Simulated reference price</p>}
-              {intent === null ? (
-                <button
-                  className="button primary wide"
-                  onClick={prepareTrade}
-                  disabled={busy !== ""}
-                >
-                  {busy === "prepare" ? "Preparing transaction…" : "Prepare transaction"}
-                </button>
-              ) : (
-                <div className="intent-box">
-                  <p className="muted small">Unsigned transaction — review in your wallet.</p>
-                  <dl>
-                    <div>
-                      <dt>To</dt>
-                      <dd className="mono">{short(intent.to)}</dd>
-                    </div>
-                    <div>
-                      <dt>Intent hash</dt>
-                      <dd className="mono">{short(intent.hash)}</dd>
-                    </div>
-                    <div>
-                      <dt>Approval</dt>
-                      <dd>
-                        {formatUnits(
-                          BigInt(intent.amountIn),
-                          quote.side === "sell" ? (asset?.stockDecimals ?? 18) : 6,
-                        )}{" "}
-                        {quote.side === "sell" ? quote.symbol : "tUSDC"}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Deadline</dt>
-                      <dd>{new Date(intent.deadline * 1000).toLocaleTimeString()}</dd>
-                    </div>
-                  </dl>
-                  <button
-                    className="button primary wide"
-                    onClick={approveIntent}
-                    disabled={busy !== ""}
-                  >
-                    {busy === "wallet" ? "Waiting for wallet…" : "Approve in wallet"}
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-          {status.length > 0 && (
-            <p className="status" role="status">
-              {status}
+    <>
+      <section className="hero-section">
+        <div className="page-width hero-layout">
+          <div className="hero-copy">
+            <p className="eyebrow">
+              <span className="eyebrow-dot" />
+              Tokenized equities · Base
             </p>
-          )}
-        </section>
-      </div>
-
-      <section className="panel activity-panel">
-        <div className="panel-head">
-          <h2>Activity</h2>
-          <span className="muted small">Prepared intents are not executed trades</span>
-        </div>
-        {activity.length === 0 ? (
-          <p className="empty">
-            {session === null
-              ? "Sign in to see activity."
-              : "No activity yet. Prepare a quote and approve it in your wallet."}
-          </p>
-        ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>Asset</th>
-                  <th>Side</th>
-                  <th>Amount in</th>
-                  <th>Status</th>
-                  <th>Transaction</th>
-                </tr>
-              </thead>
-              <tbody>
-                {activity.map((item) => (
-                  <tr key={item.id}>
-                    <td>{new Date(item.createdAt).toLocaleTimeString()}</td>
-                    <td>{item.symbol}</td>
-                    <td className={item.side === "buy" ? "buy" : "sell"}>{item.side}</td>
-                    <td className="mono">
-                      {formatUnits(BigInt(item.amountIn), item.side === "buy" ? 6 : 18)}
-                    </td>
-                    <td>
-                      <span className={`status-pill s-${item.status}`}>
-                        {STATUS_LABEL[item.status]}
-                      </span>
-                    </td>
-                    <td className="mono">{item.txHash === null ? "—" : short(item.txHash)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <h1>
+              Access the market.
+              <br />
+              <span className="gradient-text">Keep the proof.</span>
+            </h1>
+            <p className="hero-lead">
+              KYROX turns tokenized equity exposure into a transparent, policy-constrained workflow.
+              Source-timestamped prices, deterministic quotes, and a wallet that never leaves your
+              hands.
+            </p>
+            <div className="hero-ctas">
+              <Link className="button button-primary button-large" href="/markets">
+                Explore markets <ArrowRight size={17} />
+              </Link>
+              <Link className="button button-ghost button-large" href="/developers">
+                <CodeIcon size={16} /> Agent bridge
+              </Link>
+            </div>
+            <div className="hero-disclosure">
+              <span className="pulse-dot" />
+              <span>
+                <strong>Public preview.</strong> Prices are simulated, contracts are not deployed,
+                and testnet assets have no cash value.
+              </span>
+            </div>
+            <dl className="hero-metrics">
+              <div>
+                <dt>Quote engine</dt>
+                <dd>Integer-only</dd>
+              </div>
+              <div>
+                <dt>Signing</dt>
+                <dd>Wallet-held</dd>
+              </div>
+              <div>
+                <dt>Agent tools</dt>
+                <dd>Read-only</dd>
+              </div>
+            </dl>
           </div>
-        )}
+          <div className="hero-visual">
+            <HeroMarket />
+            <div className="float-card float-card-quote">
+              <span className="float-icon">
+                <LockIcon size={15} />
+              </span>
+              <div>
+                <strong>Nothing signed by KYROX</strong>
+                <small>Every fill requires your authorisation</small>
+              </div>
+            </div>
+            <div className="float-card float-card-provenance">
+              <span className="float-icon">
+                <LayersIcon size={15} />
+              </span>
+              <div>
+                <strong>Provenance preserved</strong>
+                <small>Source timestamp ≠ observation time</small>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="page-width trust-strip">
+          <span>Built for Base Sepolia</span>
+          <span className="trust-sep" />
+          <span>Deterministic policy engine</span>
+          <span className="trust-sep" />
+          <span>Model Context Protocol</span>
+          <span className="trust-sep" />
+          <span>User-held signing</span>
+        </div>
       </section>
 
-      <footer className="footer">
-        <span>KYROX · testnet prototype</span>
-        <span>No real funds · no investment advice</span>
-        <span>
-          {assets?.mode === "local-anvil" ? "Local Anvil chain 84532" : "Base Sepolia 84532"}
-        </span>
-      </footer>
-    </main>
+      <section className="section page-width" id="markets">
+        <div className="section-head">
+          <div>
+            <p className="eyebrow">Reference markets</p>
+            <h2>Three instruments. One honest venue.</h2>
+          </div>
+          <Link className="text-link" href="/markets">
+            View all markets <ArrowUpRight size={15} />
+          </Link>
+        </div>
+        <LandingMarkets />
+      </section>
+
+      <section className="section page-width" id="how-it-works">
+        <div className="section-head">
+          <div>
+            <p className="eyebrow">How it works</p>
+            <h2>Clear steps, no black boxes.</h2>
+          </div>
+          <p className="section-note">
+            A quote is a promise with an expiry. An intent is a request. Only a wallet signature is
+            authority.
+          </p>
+        </div>
+        <div className="steps-grid">
+          {STEPS.map((item) => (
+            <article className="step-card" key={item.step}>
+              <span className="step-number">{item.step}</span>
+              <h3>{item.title}</h3>
+              <p>{item.body}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="section page-width" id="product">
+        <div className="split-panel">
+          <div className="split-copy">
+            <p className="eyebrow">Designed for trust</p>
+            <h2>A fintech surface with an engineering spine.</h2>
+            <p>
+              KYROX is built as one coherent product: a consumer application, a deterministic quote
+              engine, a read-only agent bridge, and honest environment labels. Nothing is presented
+              as live when it is simulated.
+            </p>
+            <Link className="button button-ghost" href="/status">
+              Inspect system status <ArrowUpRight size={15} />
+            </Link>
+          </div>
+          <div className="pillar-grid">
+            {PILLARS.map((pillar) => {
+              const Icon = pillar.icon;
+              return (
+                <article className="pillar" key={pillar.title}>
+                  <span className="pillar-icon">
+                    <Icon size={18} />
+                  </span>
+                  <h3>{pillar.title}</h3>
+                  <p>{pillar.body}</p>
+                </article>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
+      <section className="section page-width" id="agents">
+        <div className="agent-panel">
+          <div className="agent-copy">
+            <p className="eyebrow">
+              <SparkIcon size={14} /> For AI agents
+            </p>
+            <h2>Give an agent context, not custody.</h2>
+            <p>
+              The KYROX MCP bridge exposes read-only tools over JSON-RPC: markets, history,
+              deterministic quotes, and environment status. No signing. No transfers. No arbitrary
+              calldata.
+            </p>
+            <div className="agent-actions">
+              <Link className="button button-primary" href="/developers">
+                Open developer docs <ArrowRight size={16} />
+              </Link>
+              <a
+                className="button button-ghost"
+                href="/api/mcp"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Inspect endpoint <ArrowUpRight size={15} />
+              </a>
+            </div>
+          </div>
+          <div className="terminal">
+            <div className="terminal-head">
+              <span className="terminal-dots">
+                <i />
+                <i />
+                <i />
+              </span>
+              <span>mcp · tools/list</span>
+            </div>
+            <pre>
+              <code>{`{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "tools": [
+      { "name": "kyrox_list_markets" },
+      { "name": "kyrox_get_market" },
+      { "name": "kyrox_preview_quote" },
+      { "name": "kyrox_get_protocol_status" }
+    ]
+  }
+}
+
+// boundary
+{ "canSign": false,
+  "canSend": false,
+  "canTransfer": false }`}</code>
+            </pre>
+          </div>
+        </div>
+      </section>
+
+      <section className="section page-width" id="status">
+        <div className="section-head">
+          <div>
+            <p className="eyebrow">Radical clarity</p>
+            <h2>What is live, and what is not.</h2>
+          </div>
+          <Link className="text-link" href="/status">
+            Full status page <ArrowUpRight size={15} />
+          </Link>
+        </div>
+        <div className="status-grid">
+          {STATUS.map(([label, value, tone]) => (
+            <div className="status-tile" key={label}>
+              <span className={`status-light ${tone}`} />
+              <div>
+                <strong>{label}</strong>
+                <span>{value}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="section page-width">
+        <div className="cta-panel">
+          <div>
+            <p className="eyebrow">Start with the preview</p>
+            <h2>See the full workflow today.</h2>
+            <p>
+              Open a simulated account with 25,000 tUSDC, review quotes, execute simulated fills,
+              and inspect every provenance label — no wallet or database required.
+            </p>
+          </div>
+          <div className="cta-actions">
+            <Link className="button button-primary button-large" href="/portfolio">
+              Open portfolio <ArrowRight size={17} />
+            </Link>
+            <Link className="button button-ghost button-large" href="/markets">
+              Browse markets
+            </Link>
+          </div>
+        </div>
+      </section>
+    </>
   );
 }

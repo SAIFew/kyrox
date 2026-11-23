@@ -17,7 +17,6 @@ import { createChainClient, ERC20_ABI } from "./chain.js";
 import { quoteSimulationFlags } from "./labels.js";
 import { PolicyRpcPolicy } from "./policy.js";
 import { DrizzleQuoteStore, DrizzleIntentStore } from "./stores.js";
-import type { SessionRecord } from "./auth.js";
 
 export interface QuoteResponse {
   readonly quoteId: string;
@@ -71,7 +70,7 @@ function assetFor(env: RuntimeEnvironment, symbol: string): AssetDefinition {
 
 export async function issueUserQuote(
   env: RuntimeEnvironment,
-  session: SessionRecord,
+  session: { readonly address: string },
   input: { symbol: string; side: "buy" | "sell"; amountIn: string; slippageBps: number },
 ): Promise<QuoteResponse> {
   const asset = assetFor(env, input.symbol);
@@ -142,7 +141,7 @@ export interface PrepareResult {
 
 export async function prepareUserIntent(
   env: RuntimeEnvironment,
-  session: SessionRecord,
+  session: { readonly address: string },
   quoteId: string,
   quoteToken: string,
 ): Promise<PrepareResult> {

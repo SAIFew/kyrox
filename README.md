@@ -10,6 +10,32 @@ Unified monorepo for the **KYROX** Base Sepolia testnet platform: consumer web a
 
 ---
 
+## Public Preview (deployed)
+
+The consumer application ships with a first-class **simulated preview** mode. It runs without PostgreSQL, a loopback Anvil node, or a deployed exchange, and every price, balance, and fill is labelled `simulated` in the interface.
+
+- **Market data:** deterministic, time-based reference curves for `tAAPL`, `tTSLA`, and `tNVDA`. No oracle is contacted. History, 24h ranges, volume, and freshness are generated locally.
+- **Accounts:** an HMAC-sealed, HttpOnly preview session with simulated balances. Wallet sign-in is also supported: the wallet signature is verified, while the portfolio stays simulated and explicitly labelled.
+- **Trading:** quotes run through the same `@kyrox/core` integer maths and `TESTNET_TRADE_POLICY` used by the contract tests. The review step shows price, output, minimum received, expiry, and daily limit. Confirming a preview fill updates the local session only; no calldata is built and nothing is broadcast.
+- **Agent bridge:** `POST /api/mcp` is a read-only MCP (JSON-RPC 2.0) endpoint exposing `kyrox_list_markets`, `kyrox_get_market`, `kyrox_preview_quote`, and `kyrox_get_protocol_status`. It has no sign, send, transfer, or arbitrary-calldata tool.
+- **Status:** `/status` and `/api/status` report contract, publication, and indexer state honestly, including what is not deployed.
+
+Enable it explicitly with `KYROX_DEMO_MODE=1` and at least one 32-character secret in `AUTH_SECRET` (or `KYROX_DEMO_SECRET`). When `KYROX_DEMO_MODE` is unset and `DATABASE_URL` is empty, the same mode is used automatically so a fresh deployment is immediately usable. The Vercel project uses this mode; a PostgreSQL-backed Base Sepolia deployment can be enabled later by providing `DATABASE_URL`, an approved `deployments/base-sepolia.json`, and `KYROX_DEMO_MODE=0`.
+
+### Preview routes
+
+| Route               | Purpose                                                         |
+| ------------------- | --------------------------------------------------------------- |
+| `/`                 | Product landing page with live preview market cards             |
+| `/markets`          | Searchable, sortable market explorer                            |
+| `/markets/[symbol]` | Price history, provenance, position, and order review           |
+| `/portfolio`        | Simulated balances, allocation, 24h movement, recent activity   |
+| `/activity`         | Fill and intent history with explicit status labels             |
+| `/developers`       | MCP configuration, tool catalogue, and live JSON-RPC playground |
+| `/status`           | Environment, service, and deployment transparency               |
+| `/legal`            | Preview risk disclosure                                         |
+| `/api/mcp`          | Read-only MCP bridge (GET metadata, POST JSON-RPC)              |
+
 ## Monorepo Architecture & Directory Structure
 
 ```text

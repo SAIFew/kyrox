@@ -16,8 +16,8 @@ describe("exact approval amounts", () => {
   });
 
   it("the buy/sell UI never grants an unlimited allowance", () => {
-    const page = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
-    expect(page).not.toContain("2n ** 256n - 1n");
-    expect(page).toContain("exactApprovalAmount(intent.amountIn)");
+    const trade = readFileSync(new URL("../components/trade-panel.tsx", import.meta.url), "utf8");
+    expect(trade).not.toContain("2n ** 256n - 1n");
+    expect(trade).toContain("exactApprovalAmount(prepared.amountIn)");
   });
 });
