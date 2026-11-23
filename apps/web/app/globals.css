@@ -1864,6 +1864,7 @@ pre,
 }
 
 .detail-grid {
+  min-width: 0;
   align-items: start;
   display: grid;
   gap: 18px;
@@ -1987,6 +1988,7 @@ pre,
 }
 
 .detail-side {
+  min-width: 0;
   align-self: start;
   display: flex;
   flex-direction: column;
@@ -3501,7 +3503,11 @@ pre,
   }
 
   .detail-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .detail-grid > * {
+    min-width: 0;
   }
 
   .detail-side {
