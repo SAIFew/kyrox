@@ -53,7 +53,7 @@ export const HISTORICAL_TEST_SK_PREFIX_SHA256 =
 // Not a cross-product: each historical commit is restricted to the specific file(s) it introduced.
 export const HISTORICAL_COMMIT_PATH_ALLOWLIST = new Map([
   [
-    "d19fee0260f4581afb8533e707ccb36453d8cbf3",
+    "fed3bea70c52a83b4a2de0b1848143ee81250f48",
     new Map([
       [
         "tests/test_logging_and_errors.py",
@@ -66,18 +66,18 @@ export const HISTORICAL_COMMIT_PATH_ALLOWLIST = new Map([
     ]),
   ],
   [
-    "4675bd501a7529a3a499f2cd9e8e94e10cb92b74",
+    "739f4421fcf59dc8e0c6a8b3fbdea52412e1329e",
     new Map([
       ["tests/test_portfolio.py", new Set([HISTORICAL_WEB3_DOC_EXAMPLE_SHA256])],
       ["tests/test_tx.py", new Set([HISTORICAL_WEB3_DOC_EXAMPLE_SHA256])],
     ]),
   ],
   [
-    "cf04939bb17903a6bd9107329077b856e61df06b",
+    "ee43ed43115bf5b485baed237b2481287b9bc6a9",
     new Map([["tests/test_policy.py", new Set([HISTORICAL_WEB3_DOC_EXAMPLE_SHA256])]]),
   ],
   [
-    "fd4c9817fb1de47fcd0fa1c17dac87167f26602f",
+    "36202f851879eec0a248c83ec2829de4047a4742",
     new Map([
       [
         "services/mcp-server/tests/test_logging_and_errors.py",
@@ -96,7 +96,7 @@ export const HISTORICAL_COMMIT_PATH_ALLOWLIST = new Map([
     ]),
   ],
   [
-    "1bebed73f95a16c55bf8a730bfa4240fc7dbd46f",
+    "b6700d539e4596158c6e33ed364068c0cc4a7d08",
     new Map([
       [
         "services/mcp-server/tests/test_logging_and_errors.py",
@@ -116,6 +116,17 @@ export const HISTORICAL_COMMIT_PATH_ALLOWLIST = new Map([
   ],
 ]);
 
+// Media history was rewritten to remove captured/rendered files. Older branch
+// and tooling refs still contain the pre-rewrite commits, so map them to the
+// equivalent rewritten commit before consulting the exact fixture allowlist.
+export const HISTORICAL_COMMIT_ALIASES = new Map([
+  ["d19fee0260f4581afb8533e707ccb36453d8cbf3", "fed3bea70c52a83b4a2de0b1848143ee81250f48"],
+  ["4675bd501a7529a3a499f2cd9e8e94e10cb92b74", "739f4421fcf59dc8e0c6a8b3fbdea52412e1329e"],
+  ["cf04939bb17903a6bd9107329077b856e61df06b", "ee43ed43115bf5b485baed237b2481287b9bc6a9"],
+  ["fd4c9817fb1de47fcd0fa1c17dac87167f26602f", "36202f851879eec0a248c83ec2829de4047a4742"],
+  ["1bebed73f95a16c55bf8a730bfa4240fc7dbd46f", "b6700d539e4596158c6e33ed364068c0cc4a7d08"],
+]);
+
 export const TOKEN_PATTERNS = [
   { id: "pem-private-key", re: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/g },
   {
@@ -132,7 +143,8 @@ export function isAllowedHistoricalFixture({ scope, commit, filePath, digest }) 
   if (scope !== "history") {
     return false;
   }
-  const commitPaths = HISTORICAL_COMMIT_PATH_ALLOWLIST.get(commit);
+  const canonicalCommit = HISTORICAL_COMMIT_ALIASES.get(commit) ?? commit;
+  const commitPaths = HISTORICAL_COMMIT_PATH_ALLOWLIST.get(canonicalCommit);
   if (!commitPaths) {
     return false;
   }

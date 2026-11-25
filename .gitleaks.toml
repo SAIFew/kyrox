@@ -7,6 +7,7 @@ useDefault = true
 description = "Historical Day 6-7 redaction unit test fixtures in tests/test_logging_and_errors.py"
 commits = [
   "d19fee0260f4581afb8533e707ccb36453d8cbf3",
+  "fed3bea70c52a83b4a2de0b1848143ee81250f48",
 ]
 paths = [
   '''^tests/test_logging_and_errors\.py$''',
@@ -16,6 +17,7 @@ paths = [
 description = "Historical Day 8-10 redaction test fixtures in tests/test_portfolio.py and tests/test_tx.py"
 commits = [
   "4675bd501a7529a3a499f2cd9e8e94e10cb92b74",
+  "739f4421fcf59dc8e0c6a8b3fbdea52412e1329e",
 ]
 paths = [
   '''^tests/test_portfolio\.py$''',
@@ -26,6 +28,7 @@ paths = [
 description = "Historical Day 11 redaction test fixture in tests/test_policy.py"
 commits = [
   "cf04939bb17903a6bd9107329077b856e61df06b",
+  "ee43ed43115bf5b485baed237b2481287b9bc6a9",
 ]
 paths = [
   '''^tests/test_policy\.py$''',
@@ -36,6 +39,8 @@ description = "Historical Stage 3 subtree import and PR #2 merge commits for ser
 commits = [
   "fd4c9817fb1de47fcd0fa1c17dac87167f26602f",
   "1bebed73f95a16c55bf8a730bfa4240fc7dbd46f",
+  "36202f851879eec0a248c83ec2829de4047a4742",
+  "b6700d539e4596158c6e33ed364068c0cc4a7d08",
 ]
 paths = [
   '''^services/mcp-server/tests/test_logging_and_errors\.py$''',
