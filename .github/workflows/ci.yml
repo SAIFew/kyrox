@@ -493,6 +493,15 @@ jobs:
       - name: Install Foundry (forge and anvil)
         uses: foundry-rs/foundry-toolchain@v1
 
+      - name: Install Solidity dependencies and build contracts
+        working-directory: packages/contracts
+        run: |
+          if [ ! -d lib/openzeppelin-contracts ] || [ ! -d lib/forge-std ]; then
+            forge install OpenZeppelin/openzeppelin-contracts@v5.6.1 --no-git
+            forge install foundry-rs/forge-std@v1.17.0 --no-git
+          fi
+          forge build
+
       - name: Install disposable PostgreSQL tooling
         run: |
           sudo apt-get update
