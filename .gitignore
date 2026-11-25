@@ -48,6 +48,8 @@ deployments/local-anvil.json
 deployments/base-sepolia.proposed.json
 deployments/base-sepolia.deployment-evidence.json
 deployments/base-sepolia.verified-pending.json
+# Timestamped backups created by explicit manifest activation.
+deployments/*.bak.*
 
 # Playwright artifacts
 apps/web/test-results/

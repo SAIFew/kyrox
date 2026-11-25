@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
-import { createPublicClient, http, keccak256, parseAbi, toHex, type Hex } from "viem";
+import { createPublicClient, http, keccak256, parseAbi, parseAbiItem, toHex, type Hex } from "viem";
 
 import {
   buildPendingDeploymentRecord,
@@ -32,6 +32,15 @@ const EXCHANGE_ABI = parseAbi([
   "function paused() view returns (bool)",
   "function assetSettings(address stockToken) view returns (bool listed, uint8 stockDecimals, uint32 maxSourceAgeSeconds, uint16 maxPriceDeviationBps, uint256 minPriceUsdcPerWholeToken, uint256 maxPriceUsdcPerWholeToken)",
 ]);
+const HISTORY_EVENTS = [
+  parseAbiItem(
+    "event RoleGranted(bytes32 indexed role, address indexed account, address indexed sender)",
+  ),
+  parseAbiItem(
+    "event RoleRevoked(bytes32 indexed role, address indexed account, address indexed sender)",
+  ),
+  parseAbiItem("event Transfer(address indexed from, address indexed to, uint256 value)"),
+];
 
 const ROLE_HASH: Record<string, Hex> = {
   DEFAULT_ADMIN_ROLE: `0x${"00".repeat(32)}`,
@@ -44,7 +53,7 @@ function artifactPath(name: string): string {
   return `packages/contracts/out/${name}.sol/${name}.json`;
 }
 
-function loadArtifact(name: string): DeploymentArtifact {
+export function loadArtifact(name: string): DeploymentArtifact {
   const raw = JSON.parse(readFileSync(artifactPath(name), "utf8")) as {
     abi: DeploymentArtifact["abi"];
     bytecode: { object: Hex };
@@ -59,7 +68,15 @@ function loadArtifact(name: string): DeploymentArtifact {
   };
 }
 
-function clientFor(rpcUrl: string): DeploymentVerifierRpc {
+export function parseDeploymentConfirmations(raw: string | undefined): number {
+  const value = raw === undefined ? "12" : raw.trim();
+  if (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value))) {
+    throw new Error("DEPLOYMENT_CONFIRMATIONS must be a positive safe integer.");
+  }
+  return Number(value);
+}
+
+export function clientFor(rpcUrl: string): DeploymentVerifierRpc {
   const client = createPublicClient({
     chain: {
       id: 84_532,
@@ -76,7 +93,7 @@ function clientFor(rpcUrl: string): DeploymentVerifierRpc {
       const receipt = await client.getTransactionReceipt({ hash: txHash });
       return {
         status: receipt.status,
-        contractAddress: receipt.contractAddress,
+        contractAddress: receipt.contractAddress ?? null,
         blockNumber: receipt.blockNumber,
         blockHash: receipt.blockHash,
       };
@@ -88,34 +105,85 @@ function clientFor(rpcUrl: string): DeploymentVerifierRpc {
     getBlockNumber: () => client.getBlockNumber(),
     async getBlock(blockNumber) {
       const block = await client.getBlock({ blockNumber });
+      if (block.hash === null) throw new Error(`Block ${blockNumber} has no hash.`);
       return { hash: block.hash, timestamp: Number(block.timestamp) };
     },
-    getCode: (address) => client.getCode({ address }),
-    readDecimals: (address) =>
-      client.readContract({ address, abi: TOKEN_ABI, functionName: "decimals" }),
-    readName: (address) => client.readContract({ address, abi: TOKEN_ABI, functionName: "name" }),
-    readSymbol: (address) =>
-      client.readContract({ address, abi: TOKEN_ABI, functionName: "symbol" }),
-    hasRole: (contract, role, account) =>
+    getCode: async (address, blockNumber) =>
+      (await client.getCode({ address, blockNumber })) ?? "0x",
+    async getLogs({ address, fromBlock, toBlock }) {
+      const logs: Array<Awaited<ReturnType<DeploymentVerifierRpc["getLogs"]>>[number]> = [];
+      const chunkSize = 10_000n;
+      for (let start = fromBlock; start <= toBlock; start += chunkSize) {
+        const end = start + chunkSize - 1n > toBlock ? toBlock : start + chunkSize - 1n;
+        const page = await client.getLogs({
+          address,
+          fromBlock: start,
+          toBlock: end,
+          events: HISTORY_EVENTS,
+          strict: true,
+        });
+        for (const log of page) {
+          if (log.blockHash === null) throw new Error(`Log in block ${start} has no block hash.`);
+          logs.push({
+            address: log.address,
+            topics: log.topics,
+            data: log.data,
+            blockNumber: log.blockNumber,
+            logIndex: log.logIndex,
+            transactionHash: log.transactionHash,
+            blockHash: log.blockHash,
+            removed: log.removed,
+          });
+        }
+      }
+      return logs.sort((a, b) => {
+        if (a.blockNumber !== b.blockNumber) return a.blockNumber < b.blockNumber ? -1 : 1;
+        return a.logIndex - b.logIndex;
+      });
+    },
+    readDecimals: (address, blockNumber) =>
+      client.readContract({ address, abi: TOKEN_ABI, functionName: "decimals", blockNumber }),
+    readName: (address, blockNumber) =>
+      client.readContract({ address, abi: TOKEN_ABI, functionName: "name", blockNumber }),
+    readSymbol: (address, blockNumber) =>
+      client.readContract({ address, abi: TOKEN_ABI, functionName: "symbol", blockNumber }),
+    hasRole: (contract, role, account, blockNumber) =>
       client.readContract({
         address: contract,
         abi: ACCESS_CONTROL_ABI,
         functionName: "hasRole",
         args: [ROLE_HASH[role] as Hex, account],
+        blockNumber,
       }),
-    readUsdc: (exchange) =>
-      client.readContract({ address: exchange, abi: EXCHANGE_ABI, functionName: "usdc" }),
-    readPaused: (exchange) =>
-      client.readContract({ address: exchange, abi: EXCHANGE_ABI, functionName: "paused" }),
-    readTotalSupply: (token) =>
-      client.readContract({ address: token, abi: TOKEN_ABI, functionName: "totalSupply" }),
-    async readAssetSettings(exchange, token) {
+    readUsdc: (exchange, blockNumber) =>
+      client.readContract({
+        address: exchange,
+        abi: EXCHANGE_ABI,
+        functionName: "usdc",
+        blockNumber,
+      }),
+    readPaused: (exchange, blockNumber) =>
+      client.readContract({
+        address: exchange,
+        abi: EXCHANGE_ABI,
+        functionName: "paused",
+        blockNumber,
+      }),
+    readTotalSupply: (token, blockNumber) =>
+      client.readContract({
+        address: token,
+        abi: TOKEN_ABI,
+        functionName: "totalSupply",
+        blockNumber,
+      }),
+    async readAssetSettings(exchange, token, blockNumber) {
       const [listed, stockDecimals, maxSourceAgeSeconds, maxPriceDeviationBps, minPrice, maxPrice] =
         await client.readContract({
           address: exchange,
           abi: EXCHANGE_ABI,
           functionName: "assetSettings",
           args: [token],
+          blockNumber,
         });
       return {
         listed,
@@ -158,7 +226,7 @@ async function main(argv: readonly string[]): Promise<number> {
       createViemChainIdentityProvider("primary", rpcUrl),
       createViemChainIdentityProvider("secondary", secondaryUrl),
     ]);
-    const minConfirmations = Number(process.env["DEPLOYMENT_CONFIRMATIONS"] ?? "12");
+    const minConfirmations = parseDeploymentConfirmations(process.env["DEPLOYMENT_CONFIRMATIONS"]);
     const report = await verifyDeployment({
       evidence,
       proposal,
@@ -168,6 +236,7 @@ async function main(argv: readonly string[]): Promise<number> {
         KyroxExchange: loadArtifact("KyroxExchange"),
       },
       rpc: clientFor(rpcUrl),
+      secondaryRpc: clientFor(secondaryUrl),
       expectedProposalHash: proposalHash,
       chainIdentity,
       minConfirmations,

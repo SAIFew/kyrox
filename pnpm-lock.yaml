@@ -346,6 +346,19 @@ importers:
         version: 5.9.3
 
   services/indexer:
+    dependencies:
+      '@kyrox/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@kyrox/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@kyrox/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      viem:
+        specifier: 2.58.4
+        version: 2.58.4(typescript@5.9.3)(zod@4.6.7)
     devDependencies:
       typescript:
         specifier: 5.9.3

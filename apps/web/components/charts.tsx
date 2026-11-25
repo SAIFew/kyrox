@@ -31,9 +31,11 @@ export function Sparkline({
   height?: number;
 }) {
   const id = useId().replace(/:/g, "");
-  const path = pathFor([...points], width, height);
+  const values = [...points].filter((value) => Number.isFinite(value));
+  const path = pathFor(values, width, height);
   const color = tone === "up" ? "#7cf0c1" : tone === "down" ? "#ff8f8f" : "#8b97a8";
-  const area = `${path} L${width},${height} L0,${height} Z`;
+  const area = path.length > 0 ? `${path} L${width},${height} L0,${height} Z` : null;
+  const singleY = values.length === 1 ? height / 2 : null;
 
   return (
     <svg
@@ -49,8 +51,11 @@ export function Sparkline({
           <stop offset="100%" stopColor={color} stopOpacity="0" />
         </linearGradient>
       </defs>
-      <path d={area} fill={`url(#spark-${id})`} />
-      <path d={path} fill="none" stroke={color} strokeWidth="1.6" strokeLinejoin="round" />
+      {area !== null && <path d={area} fill={`url(#spark-${id})`} />}
+      {path.length > 0 && (
+        <path d={path} fill="none" stroke={color} strokeWidth="1.6" strokeLinejoin="round" />
+      )}
+      {singleY !== null && <circle cx={width / 2} cy={singleY} r="2.2" fill={color} />}
     </svg>
   );
 }
@@ -73,13 +78,16 @@ export function PriceChart({
   const innerHeight = 300;
 
   const geometry = useMemo(() => {
-    if (points.length < 2) return null;
-    const values = points.map((point) => point.p);
+    const validPoints = points.filter(
+      (point) => Number.isFinite(point.p) && point.p > 0 && Number.isFinite(point.t) && point.t > 0,
+    );
+    if (validPoints.length < 2) return null;
+    const values = validPoints.map((point) => point.p);
     const min = Math.min(...values);
     const max = Math.max(...values);
     const span = max - min || 1;
-    const xy = points.map((point, index) => ({
-      x: (index / (points.length - 1)) * width,
+    const xy = validPoints.map((point, index) => ({
+      x: (index / (validPoints.length - 1)) * width,
       y: innerHeight - 14 - ((point.p - min) / span) * (innerHeight - 28),
       point,
     }));
@@ -88,7 +96,7 @@ export function PriceChart({
         (entry, index) => `${index === 0 ? "M" : "L"}${entry.x.toFixed(2)},${entry.y.toFixed(2)}`,
       )
       .join(" ");
-    return { xy, line, min, max };
+    return { xy, line, min, max, count: validPoints.length };
   }, [points]);
 
   if (geometry === null) {
@@ -102,20 +110,22 @@ export function PriceChart({
   const color = tone === "up" ? "#7cf0c1" : tone === "down" ? "#ff8f8f" : "#8b97a8";
   const area = `${geometry.line} L${width},${innerHeight} L0,${innerHeight} Z`;
   const active = hover === null ? null : (geometry.xy[hover] ?? null);
-  const first = points[0];
-  const last = points[points.length - 1];
+  const first = geometry.xy[0]?.point;
+  const last = geometry.xy[geometry.xy.length - 1]?.point;
+  const pointCount = geometry.count;
 
   function onMove(event: ReactMouseEvent<HTMLDivElement>) {
     const target = container.current;
     if (target === null) return;
     const rect = target.getBoundingClientRect();
     const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
-    setHover(Math.round(ratio * (points.length - 1)));
+    setHover(Math.round(ratio * (pointCount - 1)));
   }
 
   const span = (last?.t ?? 0) - (first?.t ?? 0);
-  const labelFor = (timestamp: number, variant: "time" | "date") =>
-    new Intl.DateTimeFormat("en-US", {
+  const labelFor = (timestamp: number, variant: "time" | "date") => {
+    if (!Number.isFinite(timestamp) || timestamp <= 0) return "—";
+    return new Intl.DateTimeFormat("en-US", {
       timeZone: "UTC",
       ...(variant === "time"
         ? span > 129_600
@@ -129,6 +139,7 @@ export function PriceChart({
           : { hour: "2-digit", minute: "2-digit", hour12: false }
         : { month: "short", day: "numeric" }),
     }).format(new Date(timestamp * 1_000));
+  };
 
   return (
     <div

@@ -19,33 +19,72 @@ import type {
 export const DEMO_ASSETS: readonly MarketAsset[] = [
   {
     symbol: "tAAPL",
-    name: "Apple Inc.",
+    name: "Test Apple",
     underlying: "AAPL",
     sector: "Technology",
     description:
-      "Apple designs consumer hardware, software, and services. This reference instrument tracks the company at a fixed token price for the simulated venue.",
+      "Plain test instrument tracking the Apple reference curve. Simulated venue only; no real equity, dividend, or voting rights.",
     decimals: 18,
     accent: "#a6b4c8",
   },
   {
+    symbol: "tNVDA",
+    name: "Test NVIDIA",
+    underlying: "NVDA",
+    sector: "Semiconductors",
+    description:
+      "Plain test instrument tracking the NVIDIA reference curve, with a higher simulated volatility profile.",
+    decimals: 18,
+    accent: "#7cf0c1",
+  },
+  {
+    symbol: "tMSFT",
+    name: "Test Microsoft",
+    underlying: "MSFT",
+    sector: "Technology",
+    description:
+      "Plain test instrument tracking the Microsoft reference curve for the simulated venue.",
+    decimals: 18,
+    accent: "#7aa7ff",
+  },
+  {
+    symbol: "tGOOGL",
+    name: "Test Google",
+    underlying: "GOOGL",
+    sector: "Communication services",
+    description:
+      "Plain test instrument tracking the Alphabet reference curve for the simulated venue.",
+    decimals: 18,
+    accent: "#f4c15d",
+  },
+  {
+    symbol: "tAMZN",
+    name: "Test Amazon",
+    underlying: "AMZN",
+    sector: "Consumer discretionary",
+    description:
+      "Plain test instrument tracking the Amazon reference curve for the simulated venue.",
+    decimals: 18,
+    accent: "#f59e6b",
+  },
+  {
     symbol: "tTSLA",
-    name: "Tesla, Inc.",
+    name: "Test Tesla",
     underlying: "TSLA",
     sector: "Automotive",
     description:
-      "Tesla builds electric vehicles, energy storage, and autonomy software. A higher-volatility reference instrument in the KYROX catalogue.",
+      "Plain test instrument tracking the Tesla reference curve, with a higher simulated volatility profile.",
     decimals: 18,
     accent: "#ff7b7b",
   },
   {
-    symbol: "tNVDA",
-    name: "NVIDIA Corp.",
-    underlying: "NVDA",
-    sector: "Semiconductors",
-    description:
-      "NVIDIA designs accelerated computing platforms and AI infrastructure. A high-beta reference instrument for the simulated venue.",
+    symbol: "tMETA",
+    name: "Test Meta",
+    underlying: "META",
+    sector: "Communication services",
+    description: "Plain test instrument tracking the Meta reference curve for the simulated venue.",
     decimals: 18,
-    accent: "#7cf0c1",
+    accent: "#8b9dff",
   },
 ] as const;
 
@@ -58,8 +97,12 @@ interface Curve {
 
 const CURVES: Readonly<Record<string, Curve>> = {
   tAAPL: { base: 287.42, phases: [0.6, 2.1, 4.4], trend: 0.00035, volumeBase: 18_400_000 },
-  tTSLA: { base: 431.18, phases: [2.7, 0.9, 5.2], trend: 0.00052, volumeBase: 31_700_000 },
   tNVDA: { base: 196.34, phases: [4.1, 3.3, 1.8], trend: 0.00068, volumeBase: 52_900_000 },
+  tMSFT: { base: 431.5, phases: [1.3, 4.2, 2.6], trend: 0.00041, volumeBase: 21_600_000 },
+  tGOOGL: { base: 191.2, phases: [3.2, 1.4, 5.7], trend: 0.00038, volumeBase: 24_800_000 },
+  tAMZN: { base: 218.75, phases: [5.4, 2.8, 0.9], trend: 0.00047, volumeBase: 27_300_000 },
+  tTSLA: { base: 431.18, phases: [2.7, 0.9, 5.2], trend: 0.00052, volumeBase: 31_700_000 },
+  tMETA: { base: 612.4, phases: [1.9, 4.7, 3.1], trend: 0.00044, volumeBase: 16_900_000 },
 };
 
 const SECONDS_PER_DAY = 86_400;
@@ -113,13 +156,14 @@ function volumeAt(symbol: string, timestamp: number): bigint {
   return BigInt(Math.round(curve.volumeBase * driftFactor * sessionFactor) * 1_000_000);
 }
 
-/** Simulated observations are always seconds old, never future-dated. */
+/** Simulated source timestamps advance in fixed, nondecreasing five-minute steps. */
 function sourceUpdatedAt(timestamp: number): number {
-  return timestamp - (90 + (numericHash(`feed:${Math.floor(timestamp / 30)}`) % 120));
+  return Math.floor(timestamp / 300) * 300;
 }
 
 function roundId(symbol: string, timestamp: number): number {
-  return 4_120_000 + (numericHash(`${symbol}:round:${Math.floor(timestamp / 300)}`) % 90_000);
+  const symbolOffset = numericHash(`${symbol}:round`) % 1_000_000;
+  return 4_120_000 + symbolOffset + Math.floor(timestamp / 300);
 }
 
 export function demoSnapshot(symbol: string, now = Math.floor(Date.now() / 1000)): MarketSnapshot {

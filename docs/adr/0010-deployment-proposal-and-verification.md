@@ -14,17 +14,21 @@ verify a price publication that was signed and submitted outside this codebase.
 
 ### Stages are explicit and separate
 
-1. **Proposal** — `pnpm deploy:sepolia:dry-run` reads compiled artifacts, verifies
-   the RPC chain is `84532`, and writes `deployments/base-sepolia.proposed.json`.
-   It sends nothing. The manifest has `environment: base-sepolia-proposal`,
-   `status: not_deployed`, and `address: null` everywhere.
+1. **Proposal** — `pnpm deploy:sepolia:dry-run --json` reads compiled artifacts,
+   verifies pinned chain identity through two independent archive-capable RPCs,
+   and writes `deployments/base-sepolia.proposed.json`. It sends nothing. The
+   manifest has `environment: base-sepolia-proposal`, `status: not_deployed`, and
+   `address: null` everywhere. Use `--json` in shared logs until the human-output
+   RPC URL is redacted.
 2. **Approval** — a human reviews the plan, roles, constructor arguments and
    proposed manifest.
 3. **Deployment** — performed separately, with an approved signer. This
    repository contains no deployment transaction sender.
-4. **Unsigned publication** — `prepareSetPricePublication` produces calldata and
-   a deterministic `PublicationArtifact` containing chain, exchange, calldata,
-   value, asset, round, source timestamp, hashes and expected event/observation.
+4. **Unsigned publication** — after explicit approval sets
+   `PRICE_PUBLICATION_ENABLED=true`, `prepareSetPricePublication` produces
+   calldata and a deterministic `PublicationArtifact` containing chain, exchange,
+   calldata, value, asset, round, source timestamp, hashes and expected
+   event/observation. The enforced default remains `false`.
 5. **External signing** — the authorized publisher key signs outside this
    repository. No key material exists here.
 6. **Inclusion** — the transaction is mined. A receipt alone proves execution,

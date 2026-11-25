@@ -50,6 +50,12 @@ export function assertAssetDefinition(asset: AssetDefinition): AssetDefinition {
       `Asset ${asset.symbol} uses unsupported decimals ${asset.stockDecimals}; expected one of ${SUPPORTED_STOCK_DECIMALS.join(", ")}.`,
     );
   }
+  if (asset.priceSourceKind !== "chainlink-coinbase" && asset.priceSourceKind !== "simulated") {
+    throw new CoreError("INVALID_PRICE", `Asset ${asset.symbol} has an unknown price source kind.`);
+  }
+  if (typeof asset.listed !== "boolean") {
+    throw new CoreError("UNSUPPORTED_ASSET", `Asset ${asset.symbol} has an invalid listed flag.`);
+  }
   return asset;
 }
 
@@ -97,11 +103,45 @@ export class AssetRegistry {
  *
  * No token addresses are invented here: `stockToken` stays null until a
  * verified Base Sepolia deployment is recorded in `deployments/base-sepolia.json`.
+ * Every asset is a plain test instrument with an explicit test name; none of
+ * them carries a company logo.
  */
 export const TESTNET_ASSETS: readonly AssetDefinition[] = [
   {
     symbol: "tAAPL",
     name: "Test Apple",
+    stockToken: null,
+    stockDecimals: 18,
+    priceSourceKind: "simulated",
+    listed: true,
+  },
+  {
+    symbol: "tNVDA",
+    name: "Test NVIDIA",
+    stockToken: null,
+    stockDecimals: 18,
+    priceSourceKind: "simulated",
+    listed: true,
+  },
+  {
+    symbol: "tMSFT",
+    name: "Test Microsoft",
+    stockToken: null,
+    stockDecimals: 18,
+    priceSourceKind: "simulated",
+    listed: true,
+  },
+  {
+    symbol: "tGOOGL",
+    name: "Test Google",
+    stockToken: null,
+    stockDecimals: 18,
+    priceSourceKind: "simulated",
+    listed: true,
+  },
+  {
+    symbol: "tAMZN",
+    name: "Test Amazon",
     stockToken: null,
     stockDecimals: 18,
     priceSourceKind: "simulated",
@@ -116,8 +156,8 @@ export const TESTNET_ASSETS: readonly AssetDefinition[] = [
     listed: true,
   },
   {
-    symbol: "tNVDA",
-    name: "Test NVIDIA",
+    symbol: "tMETA",
+    name: "Test Meta",
     stockToken: null,
     stockDecimals: 18,
     priceSourceKind: "simulated",

@@ -6,6 +6,7 @@ import {
   DeploymentError,
   createPublicationArtifact,
   encodeSetPrice,
+  requireAssetAddress,
   requireExchangeAddress,
   type DeploymentManifest,
   type PublicationArtifact,
@@ -14,6 +15,7 @@ import {
 
 import type { ObservationInsert, ObservationStore } from "../persistence/types.js";
 import { SOURCE_CHAIN_ID } from "../feeds/types.js";
+import { validateStoredObservation } from "../provenance.js";
 
 export type PublicationErrorCode =
   | "NOT_A_VALID_OBSERVATION"
@@ -139,17 +141,12 @@ export async function prepareSetPricePublication(
   }
 
   const simulated = params.simulated ?? false;
-  const zeroFeed = /^0x0{40}$/.test(observation.feedAddress);
-  if (simulated && !zeroFeed) {
+  try {
+    validateStoredObservation(observation, { nowSeconds, allowSimulated: simulated });
+  } catch (error) {
     throw new PublicationError(
       "INVALID_PROVENANCE",
-      "A simulated observation must carry a zero feed address.",
-    );
-  }
-  if (!simulated && zeroFeed) {
-    throw new PublicationError(
-      "INVALID_PROVENANCE",
-      "A production observation must reference a real feed address.",
+      error instanceof Error ? error.message : "Observation provenance is not verified.",
     );
   }
 
@@ -161,13 +158,28 @@ export async function prepareSetPricePublication(
   }
 
   let exchangeAddress: Address;
+  let manifestStockToken: Address;
   try {
     exchangeAddress = requireExchangeAddress(params.manifest);
+    manifestStockToken = requireAssetAddress(params.manifest, observation.assetSymbol);
   } catch (error) {
     if (error instanceof DeploymentError) {
       throw new PublicationError("DEPLOYMENT_UNAVAILABLE", error.message);
     }
     throw error;
+  }
+
+  if (params.stockToken.toLowerCase() !== manifestStockToken.toLowerCase()) {
+    throw new PublicationError(
+      "INVALID_TOKEN",
+      `Stock token ${params.stockToken} does not match the manifest asset ${manifestStockToken}.`,
+    );
+  }
+  if (simulated && params.manifest.environment !== "local-anvil") {
+    throw new PublicationError(
+      "INVALID_PROVENANCE",
+      "Simulated publication requires an explicit local-anvil manifest.",
+    );
   }
 
   if (

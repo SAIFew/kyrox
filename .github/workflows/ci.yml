@@ -15,8 +15,9 @@ concurrency:
 
 jobs:
   javascript:
-    name: Lint, type-check, test, build
+    name: Lint, type-check, test, build, browser validation
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -48,11 +49,243 @@ jobs:
       - name: Test (unit and cross-surface invariants)
         run: pnpm test
 
+      - name: Test deployment dry-run CLI refusal without RPC access
+        shell: bash
+        run: |
+          set +e
+          output="$(env -u BASE_SEPOLIA_RPC_URL -u BASE_SEPOLIA_RPC_URL_SECONDARY pnpm deploy:sepolia:dry-run --json 2>&1)"
+          status=$?
+          set -e
+          if [ "$status" -ne 2 ]; then
+            printf 'Expected dry-run exit 2 without RPC configuration; got %s\n' "$status"
+            exit 1
+          fi
+          printf '%s\n' "$output" | grep -F "BASE_SEPOLIA_RPC_URL_SECONDARY is required"
+          test ! -e deployments/base-sepolia.proposed.json
+
       - name: Build consumer web app
         run: pnpm build
 
+      - name: Verify deployment manifests are present in server traces
+        run: |
+          node --input-type=module <<'NODE'
+          import { existsSync, readdirSync, readFileSync } from "node:fs";
+          import path from "node:path";
+
+          function tracesUnder(directory) {
+            return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+              const fullPath = path.join(directory, entry.name);
+              return entry.isDirectory() ? tracesUnder(fullPath) : entry.name.endsWith(".nft.json") ? [fullPath] : [];
+            });
+          }
+
+          const traces = tracesUnder("apps/web/.next/server/app");
+          if (traces.length === 0) throw new Error("No Next.js server traces were produced.");
+          const required = [
+            "base-sepolia.json",
+            ...(existsSync("deployments/local-anvil.json") ? ["local-anvil.json"] : []),
+          ];
+          for (const trace of traces) {
+            const { files = [] } = JSON.parse(readFileSync(trace, "utf8"));
+            for (const manifest of required) {
+              const suffix = `/deployments/${manifest}`;
+              if (!files.some((file) => file.endsWith(suffix) || file === `deployments/${manifest}`)) {
+                throw new Error(`${trace} is missing deployments/${manifest}`);
+              }
+            }
+          }
+          console.log(`Verified ${required.join(" and ")} in ${traces.length} server traces.`);
+          NODE
+
       - name: Build static marketing app
         run: pnpm build:marketing
+
+      - name: Install Chromium and Chrome for Playwright validators
+        run: pnpm exec playwright install --with-deps chromium chrome
+
+      - name: Validate static marketing export
+        shell: bash
+        run: |
+          python3 -m http.server 4173 --directory apps/marketing/out >"$RUNNER_TEMP/marketing-http.log" 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" >/dev/null 2>&1 || true' EXIT
+          for _ in $(seq 1 50); do
+            if curl -fsS http://127.0.0.1:4173/ >/dev/null; then break; fi
+            sleep 0.1
+          done
+          KYROX_MARKETING_SHOTS_DIR="$RUNNER_TEMP/kyrox-marketing-validation" pnpm validate:marketing
+
+      - name: Upload marketing validation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: marketing-validation
+          path: ${{ runner.temp }}/kyrox-marketing-validation
+          if-no-files-found: ignore
+
+  release-readiness:
+    name: Release migration and live-mode smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: kyrox_test
+          POSTGRES_PASSWORD: kyrox_test_password
+          POSTGRES_DB: kyrox_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U kyrox_test -d kyrox_test"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      DATABASE_URL: postgres://kyrox_test:kyrox_test_password@127.0.0.1:5432/kyrox_test
+      DIRECT_DATABASE_URL: postgres://kyrox_test:kyrox_test_password@127.0.0.1:5432/kyrox_test
+      AUTH_SECRET: ci-only-preview-secret-not-for-deployment-0000
+      APP_ORIGIN: https://ci.kyrox.invalid
+      BASE_SEPOLIA_RPC_URL: http://127.0.0.1:9
+      KYROX_DEMO_MODE: "0"
+      KYROX_ENVIRONMENT: base-sepolia
+      KYROX_MARKET_SESSION_MODE: unknown
+      PRICE_PUBLICATION_ENABLED: "false"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.21.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Create a non-destructive temporary live manifest
+        run: |
+          node --input-type=module <<'NODE'
+          import { writeFileSync } from "node:fs";
+          import path from "node:path";
+
+          const asset = (suffix) => ({
+            address: `0x${suffix.repeat(40)}`,
+            maxSourceAgeSeconds: 3600,
+            maxPriceDeviationBps: 500,
+            minPriceUsdcPerWholeToken: "1",
+            maxPriceUsdcPerWholeToken: "1000000000000",
+          });
+          writeFileSync(
+            path.join(process.env.RUNNER_TEMP, "kyrox-live-manifest.json"),
+            `${JSON.stringify({
+              chainId: 84532,
+              chain: "base-sepolia",
+              environment: "base-sepolia",
+              status: "deployed",
+              contracts: {
+                TestUSDC: { address: `0x${"1".repeat(40)}` },
+                KyroxExchange: { address: `0x${"2".repeat(40)}` },
+              },
+              assets: {
+                tAAPL: asset("3"),
+                tTSLA: asset("4"),
+                tNVDA: asset("5"),
+              },
+            }, null, 2)}\n`,
+          );
+          NODE
+
+      - name: Verify migrate refuses missing database configuration
+        shell: bash
+        run: |
+          set +e
+          output="$(env -u DIRECT_DATABASE_URL -u DATABASE_URL pnpm migrate 2>&1)"
+          status=$?
+          set -e
+          if [ "$status" -ne 2 ]; then
+            printf 'Expected migrate exit 2 without database configuration; got %s\n' "$status"
+            exit 1
+          fi
+          printf '%s\n' "$output" | grep -F "DIRECT_DATABASE_URL or DATABASE_URL is required"
+
+      - name: Apply release migrations through DIRECT_DATABASE_URL
+        run: pnpm migrate
+
+      - name: Verify migration ledger exists
+        run: |
+          pnpm --filter @kyrox/db exec node --input-type=module <<'NODE'
+          import pg from "pg";
+          const client = new pg.Client({ connectionString: process.env.DIRECT_DATABASE_URL });
+          await client.connect();
+          try {
+            const { rows } = await client.query(`SELECT EXISTS (
+              SELECT 1 FROM pg_class c
+              JOIN pg_namespace n ON n.oid = c.relnamespace
+              WHERE n.nspname = 'drizzle' AND c.relname = '__drizzle_migrations'
+            ) AS present`);
+            if (rows[0]?.present !== true) {
+              throw new Error("Drizzle migration ledger was not created.");
+            }
+          } finally {
+            await client.end();
+          }
+          NODE
+
+      - name: Build consumer app in live mode
+        env:
+          KYROX_DEPLOYMENT_MANIFEST: ${{ runner.temp }}/kyrox-live-manifest.json
+        run: pnpm build
+
+      - name: Start and smoke live mode without external RPC
+        env:
+          KYROX_DEPLOYMENT_MANIFEST: ${{ runner.temp }}/kyrox-live-manifest.json
+        shell: bash
+        run: |
+          pnpm --filter @kyrox/web exec next start -p 3200 >"$RUNNER_TEMP/kyrox-live-next.log" 2>&1 &
+          APP_PID=$!
+          trap 'kill "$APP_PID" >/dev/null 2>&1 || true' EXIT
+          for _ in $(seq 1 100); do
+            if curl -fsS http://127.0.0.1:3200/api/health >/dev/null; then break; fi
+            sleep 0.2
+          done
+          node --input-type=module <<'NODE'
+          import assert from "node:assert/strict";
+
+          const healthResponse = await fetch("http://127.0.0.1:3200/api/health");
+          assert.equal(healthResponse.status, 200);
+          const health = await healthResponse.json();
+          assert.equal(health.ok, true);
+          assert.equal(health.mode, "live");
+          assert.equal(health.environment.mode, "base-sepolia");
+
+          const healthzResponse = await fetch("http://127.0.0.1:3200/api/healthz");
+          assert.equal(healthzResponse.status, 200);
+          assert.deepEqual(await healthzResponse.json(), { status: "ok" });
+          assert.equal(healthzResponse.headers.get("cache-control"), "no-store");
+
+          const readyzResponse = await fetch("http://127.0.0.1:3200/api/readyz");
+          assert.equal(readyzResponse.status, 200);
+          assert.deepEqual(await readyzResponse.json(), { status: "ready" });
+          assert.equal(readyzResponse.headers.get("cache-control"), "no-store");
+
+          const assetsResponse = await fetch("http://127.0.0.1:3200/api/assets");
+          assert.equal(assetsResponse.status, 200);
+          const assets = await assetsResponse.json();
+          assert.equal(assets.mode, "base-sepolia");
+          assert.equal(assets.simulated, false);
+          assert.equal(assets.exchange, `0x${"2".repeat(40)}`);
+          assert.equal(assets.assets.length, 3);
+          assert.ok(assets.assets.every((asset) => asset.fresh === false && asset.priceUsdc === null));
+          console.log("Live-mode health and database-backed asset smoke passed without RPC access.");
+          NODE
 
   python:
     name: Python MCP (${{ matrix.python-version }})
@@ -73,16 +306,32 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install package and dev dependencies
+      - name: Combine pinned build and runtime constraints
         run: |
-          python -m pip install --upgrade pip build
-          python -m pip install ".[dev]"
+          cp ../../docs/ci/python-build-constraints.txt "$RUNNER_TEMP/kyrox-python-build-constraints.txt"
+          cat "$RUNNER_TEMP/kyrox-python-build-constraints.txt" requirements-lock.txt >"$RUNNER_TEMP/kyrox-python-constraints.txt"
+
+      - name: Install pinned build tooling
+        env:
+          PIP_CONSTRAINT: ${{ runner.temp }}/kyrox-python-constraints.txt
+          PIP_BUILD_CONSTRAINT: ${{ runner.temp }}/kyrox-python-build-constraints.txt
+        run: python -m pip install --upgrade --constraint "$PIP_CONSTRAINT" pip build setuptools wheel
+
+      - name: Install locked package and dev dependencies
+        env:
+          PIP_CONSTRAINT: ${{ runner.temp }}/kyrox-python-constraints.txt
+          PIP_BUILD_CONSTRAINT: ${{ runner.temp }}/kyrox-python-build-constraints.txt
+        run: |
+          python -m pip install --requirement requirements-lock.txt --constraint "$PIP_CONSTRAINT" ".[dev]"
           python -m pip check
 
       - name: Run pytest suite
         run: python -m pytest -q
 
       - name: Build wheel and sdist and verify isolated installation
+        env:
+          PIP_CONSTRAINT: ${{ runner.temp }}/kyrox-python-constraints.txt
+          PIP_BUILD_CONSTRAINT: ${{ runner.temp }}/kyrox-python-build-constraints.txt
         run: python ../../scripts/verify-mcp-package.py
 
   contracts:
@@ -194,7 +443,7 @@ jobs:
           forge install foundry-rs/forge-std@v1.17.0 --no-git
           forge build
 
-      - name: Run PostgreSQL observation store integration tests (9 tests)
+      - name: Run PostgreSQL observation store integration tests (8 tests)
         env:
           KYROX_TEST_DATABASE_URL: postgres://kyrox_test:kyrox_test_password@127.0.0.1:5432/kyrox_test
           DATABASE_URL: postgres://kyrox_test:kyrox_test_password@127.0.0.1:5432/kyrox_test
@@ -213,6 +462,56 @@ jobs:
         env:
           KYROX_ANVIL_E2E: "1"
         run: pnpm e2e:anvil
+
+  consumer-e2e:
+    name: Consumer Playwright local E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.21.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Foundry (forge and anvil)
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Install disposable PostgreSQL tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql postgresql-contrib libpq-dev netcat-openbsd
+          PG_BIN="$(pg_config --bindir)"
+          test -x "$PG_BIN/initdb"
+          echo "PG_BIN=$PG_BIN" >>"$GITHUB_ENV"
+
+      - name: Install Chrome for Playwright
+        run: pnpm exec playwright install --with-deps chrome
+
+      - name: Run local Anvil + PostgreSQL + Next.js acceptance journey
+        run: pnpm local:e2e
+
+      - name: Upload Playwright artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: consumer-playwright
+          path: |
+            apps/web/test-results/
+            apps/web/playwright-report/
+          if-no-files-found: ignore
 
   cross-surface:
     name: Cross-surface runtime invariants
@@ -238,11 +537,20 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install Node workspace and Python MCP runtime dependencies
+      - name: Combine pinned build and runtime constraints
+        run: |
+          cp docs/ci/python-build-constraints.txt "$RUNNER_TEMP/kyrox-python-build-constraints.txt"
+          cat "$RUNNER_TEMP/kyrox-python-build-constraints.txt" services/mcp-server/requirements-lock.txt >"$RUNNER_TEMP/kyrox-python-constraints.txt"
+
+      - name: Install Node workspace and locked Python MCP runtime dependencies
+        env:
+          PIP_CONSTRAINT: ${{ runner.temp }}/kyrox-python-constraints.txt
+          PIP_BUILD_CONSTRAINT: ${{ runner.temp }}/kyrox-python-build-constraints.txt
         run: |
           pnpm install --frozen-lockfile
-          python -m pip install --upgrade pip
-          python -m pip install "services/mcp-server[dev]"
+          python -m pip install --upgrade --constraint "$PIP_CONSTRAINT" pip build setuptools wheel
+          python -m pip install --requirement services/mcp-server/requirements-lock.txt --constraint "$PIP_CONSTRAINT" "services/mcp-server[dev]"
+          python -m pip check
 
       - name: Run cross-surface runtime invariant and secret-scanner regression tests
         env:
@@ -250,7 +558,7 @@ jobs:
         run: pnpm vitest run packages/core/test/cross-surface-invariants.test.ts packages/core/test/secret-scanner.test.ts
 
   secrets:
-    name: Full-history secret scan
+    name: Full-history and untracked-file secret scan
     runs-on: ubuntu-latest
     steps:
       - name: Checkout full history
@@ -263,5 +571,58 @@ jobs:
         with:
           node-version: 24
 
-      - name: Run full-history and working-tree secret scanner
+      - name: Run full-history and tracked working-tree secret scanner
         run: node scripts/scan-secrets.mjs
+
+      - name: Scan safe non-ignored untracked text files
+        run: |
+          node --input-type=module <<'NODE'
+          import { execFileSync } from "node:child_process";
+          import { lstatSync, readFileSync } from "node:fs";
+          import path from "node:path";
+          import { fingerprint, scanFileContent } from "./scripts/scan-secrets.mjs";
+
+          const cwd = process.cwd();
+          const files = execFileSync("git", ["ls-files", "--others", "--exclude-standard", "-z"], {
+            cwd,
+            encoding: "utf8",
+          }).split("\0").filter(Boolean);
+          const binaryExtension = /\.(?:png|ico|jpe?g|gif|webp|mp4|webm|mov|aiff|wav|pdf|zip|gz|woff2?)$/i;
+          const findings = [];
+          let scanned = 0;
+          let skipped = 0;
+
+          for (const filePath of files) {
+            const stat = lstatSync(path.join(cwd, filePath));
+            if (!stat.isFile() || stat.size > 2 * 1024 * 1024 || binaryExtension.test(filePath)) {
+              skipped += 1;
+              continue;
+            }
+            const content = readFileSync(path.join(cwd, filePath), "utf8");
+            if (content.includes("\0")) {
+              skipped += 1;
+              continue;
+            }
+            scanned += 1;
+            if (/(^|\/)\.env(\.|$)/.test(filePath) && !filePath.endsWith(".env.example")) {
+              findings.push({
+                filePath,
+                lineNumber: 0,
+                rule: "untracked-env-file",
+                fingerprint: fingerprint(filePath),
+              });
+            }
+            scanFileContent({ filePath, content, scope: "UNTRACKED", findings });
+          }
+
+          if (findings.length > 0) {
+            console.error(`Untracked-file secret scan failed with ${findings.length} finding(s):`);
+            for (const finding of findings) {
+              console.error(
+                `  file=${finding.filePath}:${finding.lineNumber} rule=${finding.rule} sha256_prefix=${finding.fingerprint}`,
+              );
+            }
+            process.exit(1);
+          }
+          console.log(`Untracked-file secret scan passed: ${scanned} text files scanned, ${skipped} binary/large files skipped.`);
+          NODE

@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 
 import {
   priceIngestionEvents,
@@ -71,14 +71,30 @@ export class DrizzleObservationStore implements ObservationStore {
     });
   }
 
-  async latestValidObservation(assetSymbol: string): Promise<ObservationInsert | null> {
+  async latestValidObservation(
+    assetSymbol: string,
+    expectedFeedAddress?: ObservationInsert["feedAddress"],
+  ): Promise<ObservationInsert | null> {
     const rows = await this.#db
       .select()
       .from(priceObservations)
       .where(
-        and(eq(priceObservations.assetSymbol, assetSymbol), eq(priceObservations.status, "valid")),
+        and(
+          eq(priceObservations.assetSymbol, assetSymbol),
+          eq(priceObservations.status, "valid"),
+          expectedFeedAddress === undefined
+            ? undefined
+            : sql`lower(${priceObservations.feedAddress}) = lower(${expectedFeedAddress})`,
+        ),
       )
-      .orderBy(desc(priceObservations.observedAt))
+      // Canonical source order, not ingestion arrival order. A delayed older
+      // poll can never replace a newer source timestamp/round. `id` is the
+      // deterministic final tie-breaker for otherwise identical rows.
+      .orderBy(
+        desc(priceObservations.sourceUpdatedAt),
+        desc(priceObservations.sourceRoundId),
+        desc(priceObservations.id),
+      )
       .limit(1);
 
     const row = rows[0];

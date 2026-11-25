@@ -10,6 +10,11 @@ export interface IngestCliConfig {
   readonly assetSymbols: readonly string[];
   readonly maxSourceAgeSeconds: number;
   readonly manifestPath: string;
+  /**
+   * Defaults to false. Only an explicit true/1/yes/on enables preparation of
+   * unsigned setPrice calls; ingestion itself remains enabled.
+   */
+  readonly pricePublicationEnabled: boolean;
 }
 
 const HTTP_URL = /^https?:\/\/[^\s]+$/;
@@ -51,10 +56,20 @@ export function parseIngestConfig(
     }
   }
 
-  const maxAgeRaw = env["PRICE_MAX_SOURCE_AGE_SECONDS"] ?? "3600";
+  const maxAgeRaw = env["PRICE_MAX_SOURCE_AGE_SECONDS"] ?? "600";
   const maxSourceAgeSeconds = Number(maxAgeRaw);
   if (!Number.isInteger(maxSourceAgeSeconds) || maxSourceAgeSeconds <= 0) {
     throw new ConfigError("PRICE_MAX_SOURCE_AGE_SECONDS must be a positive integer.");
+  }
+
+  const publicationRaw = env["PRICE_PUBLICATION_ENABLED"]?.trim().toLowerCase() ?? "";
+  let pricePublicationEnabled = false;
+  if (publicationRaw.length > 0) {
+    if (["true", "1", "yes", "on"].includes(publicationRaw)) {
+      pricePublicationEnabled = true;
+    } else if (!["false", "0", "no", "off"].includes(publicationRaw)) {
+      throw new ConfigError("PRICE_PUBLICATION_ENABLED must be an explicit boolean (true/false).");
+    }
   }
 
   return {
@@ -62,6 +77,7 @@ export function parseIngestConfig(
     databaseUrl,
     assetSymbols: [...new Set(tickers)],
     maxSourceAgeSeconds,
+    pricePublicationEnabled,
     manifestPath: env["KYROX_DEPLOYMENT_MANIFEST"]?.trim() || "deployments/base-sepolia.json",
   };
 }

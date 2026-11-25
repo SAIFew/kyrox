@@ -851,8 +851,35 @@ pre,
   font-family: var(--mono);
   font-size: 11px;
   font-weight: 600;
+  isolation: isolate;
   justify-content: center;
   letter-spacing: 0.02em;
+  overflow: hidden;
+  position: relative;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 4px 12px rgba(0, 0, 0, 0.16);
+}
+
+.asset-mark-glyph {
+  height: 100%;
+  inset: 0;
+  opacity: 0.82;
+  position: absolute;
+  width: 100%;
+}
+
+.asset-mark-letter {
+  align-items: center;
+  background: rgba(6, 9, 14, 0.68);
+  border: 1px solid currentColor;
+  border-color: color-mix(in srgb, currentColor 30%, transparent);
+  border-radius: 50%;
+  display: inline-flex;
+  height: 20px;
+  justify-content: center;
+  position: relative;
+  width: 20px;
 }
 
 .asset-mark.small {
@@ -3905,5 +3932,139 @@ pre,
   .account-network {
     font-size: 8px;
     padding: 2px 4px;
+  }
+}
+
+/* Operator dashboard and basket builder */
+.admin-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 10px;
+}
+
+.admin-tabs a {
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 550;
+  padding: 7px 11px;
+}
+
+.admin-tabs a:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.admin-tabs a.is-active {
+  background: rgba(124, 240, 193, 0.08);
+  border-color: rgba(124, 240, 193, 0.28);
+  color: var(--mint);
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.admin-table th {
+  text-align: left;
+  color: var(--dim);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  font-weight: 600;
+}
+
+.admin-table td {
+  padding: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.045);
+  vertical-align: top;
+}
+
+.admin-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.admin-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.admin-search {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.admin-search input,
+.admin-search select {
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 8px 10px;
+  min-width: 170px;
+}
+
+.admin-check-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+
+.admin-check {
+  align-items: center;
+  color: var(--muted);
+  display: inline-flex;
+  font-size: 12px;
+  gap: 7px;
+}
+
+.admin-inline {
+  align-items: center;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.admin-inline select {
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 11.5px;
+  padding: 5px 7px;
+}
+
+.basket-leg {
+  align-items: end;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(120px, 1fr) minmax(140px, 1fr) auto;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.045);
+}
+
+.basket-leg:last-of-type {
+  border-bottom: 0;
+}
+
+@media (max-width: 720px) {
+  .admin-table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  .basket-leg {
+    grid-template-columns: 1fr 1fr auto;
   }
 }

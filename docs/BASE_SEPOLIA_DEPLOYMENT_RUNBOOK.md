@@ -38,15 +38,17 @@ export ADMIN_ADDRESS="<ADMIN_ADDRESS>"
 export PRICE_UPDATER_ADDRESS="<PRICE_UPDATER_ADDRESS>"
 export PAUSER_ADDRESS="<PAUSER_ADDRESS>"
 export DEPLOYER_ADDRESS="<APPROVED_DEPLOYER_ADDRESS>"
-export SEPOLIA_DEVIATION_BPS="tAAPL:<BPS>,tTSLA:<BPS>,tNVDA:<BPS>"
+export SEPOLIA_DEVIATION_BPS="tAAPL:<BPS>,tNVDA:<BPS>,tMSFT:<BPS>,tGOOGL:<BPS>,tAMZN:<BPS>,tTSLA:<BPS>,tMETA:<BPS>"
 export DEPLOYMENT_CONFIRMATIONS=12
 export BASESCAN_API_KEY="<BASESCAN_API_KEY>"
 ```
 
 Both RPCs must be independently operated and archive-capable; the verifier pins
 genesis `0x0dcc9e…34e4` and checkpoint 61,800,000
-`0x486d04…d7ce`. Do not use a provider that prunes block zero. The deployer
-address must be the hardware-wallet address used for every `forge create`.
+`0x486d04…d7ce`. Do not use a provider that prunes block zero or a chain-id-only
+public endpoint. Provider URLs may contain credentials: never paste them into
+logs or issues. The deployer address must be the hardware-wallet address used
+for every `forge create`.
 
 `ADMIN_ADDRESS`, `PRICE_UPDATER_ADDRESS` and `PAUSER_ADDRESS` must be different
 keys unless the risk is explicitly accepted. **Single-step admin risk:** losing
@@ -67,7 +69,7 @@ forge test -vvv
 Generate and review the proposal:
 
 ```bash
-pnpm deploy:sepolia:dry-run
+pnpm deploy:sepolia:dry-run --json
 ```
 
 Review `deployments/base-sepolia.proposed.json`:
@@ -82,6 +84,10 @@ Review `deployments/base-sepolia.proposed.json`:
 Record the proposal hash printed by `pnpm verify:sepolia-deployment` later; the
 verifier computes `keccak256` over the exact proposal file bytes and rejects a
 mismatch.
+
+Use `--json` for any shared dry-run log. The human-output path in
+`scripts/deploy-sepolia.ts` currently prints the full primary RPC URL; that
+script is outside DevOps ownership and remains a lead follow-up to redact.
 
 Fund only `<ADMIN_ADDRESS>` with Base Sepolia ETH for deployment gas. Check:
 
@@ -221,7 +227,7 @@ deviation guard:
 
 ```bash
 cast send <EXCHANGE_ADDRESS> "listAsset(address,uint32,uint256,uint256)" \
-  <STOCK_ADDRESS> 3600 1 1000000000000 \
+  <STOCK_ADDRESS> 600 1 1000000000000 \
   --rpc-url "$BASE_SEPOLIA_RPC_URL" --ledger
 
 cast send <EXCHANGE_ADDRESS> "setPriceBounds(address,uint256,uint256,uint16)" \
@@ -232,14 +238,14 @@ cast send <EXCHANGE_ADDRESS> "setPriceBounds(address,uint256,uint256,uint16)" \
 A zero deviation is rejected by the dry-run proposal. The actual tolerance is a
 founder decision and must match `SEPOLIA_DEVIATION_BPS`.
 
-Arguments: `maxSourceAgeSeconds = 3600`, `minPrice = 1`, `maxPrice = 1e12`
+Arguments: `maxSourceAgeSeconds = 600`, `minPrice = 1`, `maxPrice = 1e12`
 (1,000,000 USDC per whole token). These values must match the approved proposal.
 
 Expected event:
 `AssetListed(address indexed stockToken, uint8 stockDecimals, uint32 maxSourceAgeSeconds, uint256 minPrice, uint256 maxPrice)`.
 
 Post-state: `assetSettings(token)` returns `listed=true`, `stockDecimals=18`,
-`maxSourceAgeSeconds=3600`, `maxPriceDeviationBps=<APPROVED_BPS>`, bounds
+`maxSourceAgeSeconds=600`, `maxPriceDeviationBps=<APPROVED_BPS>`, bounds
 `1`/`1000000000000`.
 
 ## 4a. Source verification
@@ -326,10 +332,30 @@ base-sepolia`, `status: deployed`, non-zero addresses).
 - Review the diff and commit only after approval. Do not run activation in this
   task.
 
-## 7. First price publication (future; do not execute now)
+## 7. Production runtime and first price publication (future; do not execute now)
+
+### 7.0 Runtime gates
+
+1. Apply release migrations with `pnpm migrate`, preferring
+   `DIRECT_DATABASE_URL` and falling back to `DATABASE_URL` only when direct is
+   blank. Back up the database first.
+2. Set `KYROX_DEMO_MODE=0`, `KYROX_ENVIRONMENT=base-sepolia`, a strong
+   `AUTH_SECRET`, `DATABASE_URL`, and `BASE_SEPOLIA_RPC_URL`.
+3. Keep `KYROX_MARKET_SESSION_MODE=unknown` unless a founder explicitly approves
+   `always-open-testnet`. The default fails closed because no exchange calendar
+   is integrated. The opt-in is testnet-only and still enforces source-timestamp
+   freshness, bounds, deviation, pause state, and policy; it is not a 24/7 live
+   price or mainnet claim.
+4. Keep `PRICE_PUBLICATION_ENABLED=false`. The false default is enforced; set it
+   to `true` only after the deployment and publication procedure are approved.
+5. Confirm the production build traces contain `deployments/base-sepolia.json`
+   (and `local-anvil.json` when generated locally), then run the live-mode
+   health/database smoke against a temporary manifest before promotion.
+
+### 7.1 First publication
 
 1. Run ingestion against the production database:
-   `BASE_MAINNET_RPC_URL=... DATABASE_URL=... PRICE_ALLOWED_TICKERS=tAAPL,tTSLA,tNVDA pnpm price:ingest`.
+   `BASE_MAINNET_RPC_URL=<READ_ONLY_RPC> DATABASE_URL=<POOLED_DATABASE_URL> PRICE_ALLOWED_TICKERS=tAAPL,tNVDA,tMSFT,tGOOGL,tAMZN,tTSLA,tMETA PRICE_PUBLICATION_ENABLED=false pnpm price:ingest`.
 2. Confirm the report shows the sequencer healthy and at least one new round.
 3. Inspect the stored observation:
    `SELECT asset_symbol, source_round_id, source_updated_at, observed_at, status FROM price_observations ORDER BY id DESC;`
@@ -371,11 +397,12 @@ enforced on-chain. A founder decision is required before external beta.
 
 ## 8. Emergency pause and recovery
 
-- Pause: `cast send <EXCHANGE_ADDRESS> "pause()" --ledger` from the pauser.
+- Pause: `cast send <EXCHANGE_ADDRESS> "pause()" --rpc-url "$BASE_SEPOLIA_RPC_URL" --ledger` from the pauser.
 - Trading then fails closed; prepared intents become unusable.
 - Recovery from a bad observation requires pausing, then
-  `resetObservation(token)` from the admin while paused, then a fresh valid
-  publication, then `unpause()`.
+  `cast send <EXCHANGE_ADDRESS> "resetObservation(address)" <STOCK_ADDRESS> --rpc-url "$BASE_SEPOLIA_RPC_URL" --ledger`
+  from the admin while paused, then a fresh valid publication, then
+  `cast send <EXCHANGE_ADDRESS> "unpause()" --rpc-url "$BASE_SEPOLIA_RPC_URL" --ledger`.
 - Do not renounce `DEFAULT_ADMIN_ROLE`, and do not grant roles to unverified
   addresses.
 
@@ -388,7 +415,35 @@ enforced on-chain. A founder decision is required before external beta.
 - [ ] Token metadata and admin roles confirmed.
 - [ ] Exchange settlement token and roles confirmed.
 - [ ] Asset listing/freshness/bounds confirmed.
+- [ ] Market-session mode decision recorded (`unknown` fail-closed or approved testnet opt-in).
+- [ ] Database backup taken and `pnpm migrate` completed through the direct URL.
+- [ ] Server traces contain `deployments/base-sepolia.json` (and the generated local manifest when applicable); live-mode smoke passed.
+- [ ] `PRICE_PUBLICATION_ENABLED=false` confirmed before first publication approval.
 - [ ] Read-only deployment verification passed.
 - [ ] Manifest activation explicitly approved.
-- [ ] Pause procedure rehearsed.
+- [ ] Pause procedure rehearsed with an explicit `--rpc-url`.
+- [ ] Dry-run RPC URL redaction fixed, or all shared dry-run output uses `--json`.
 - [ ] First publication verified to the confirmation threshold.
+
+## 8. Indexer activation
+
+After the deployment manifest is approved with `status: deployed` and all seven asset
+addresses are present, start the indexer with the explicit RPC and database:
+
+```bash
+BASE_SEPOLIA_RPC_URL=<READ_ONLY_RPC> \
+DATABASE_URL=<POOLED_DATABASE_URL> \
+INDEXER_START_BLOCK=<DEPLOYMENT_BLOCK> \
+INDEXER_ONCE=1 \
+pnpm indexer:run
+```
+
+Verify:
+
+- the first cycle writes `indexer_checkpoints` and exits 0;
+- `/admin?tab=trades` and `?tab=claims` show the expected rows;
+- running the same cycle again does not duplicate rows;
+- an unpopulated or mismatched manifest makes the indexer exit non-zero without writing.
+
+Do not point the indexer at Base Mainnet. It requires chain ID `84532` and the verified
+`KyroxExchange`/`TestUSDC` addresses from the manifest.

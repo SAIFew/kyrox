@@ -93,3 +93,13 @@ divergence fails the build immediately.
   wheel and sdist without Node.js runtime dependencies.
 - No silent divergence between TypeScript and Python chain IDs or asset
   allowlists.
+
+---
+
+## Amendment — 2026-11-25: seven-asset testnet catalogue
+
+The cross-surface allowlist in this ADR has since expanded from three to seven test assets to
+match the Testnet MVP plan: `tAAPL`, `tNVDA`, `tMSFT`, `tGOOGL`, `tAMZN`, `tTSLA`, `tMETA`. The
+decision itself (one canonical allowlist, enforced by cross-surface drift tests) is unchanged;
+`packages/core/src/assets.ts` and `services/mcp-server/tools/policy.py` are the current sources of
+truth. The original three-asset text above is retained as the historical decision record.

@@ -6,16 +6,39 @@
     "token_address": ""
   },
   {
+    "ticker": "tNVDA",
+    "stock": "Test NVIDIA",
+    "reference_value": 140.0,
+    "token_address": ""
+  },
+  {
+    "ticker": "tMSFT",
+    "stock": "Test Microsoft",
+    "reference_value": 415.0,
+    "token_address": ""
+  },
+  {
+    "ticker": "tGOOGL",
+    "stock": "Test Google",
+    "reference_value": 180.0,
+    "token_address": ""
+  },
+  {
+    "ticker": "tAMZN",
+    "stock": "Test Amazon",
+    "reference_value": 200.0,
+    "token_address": ""
+  },
+  {
     "ticker": "tTSLA",
     "stock": "Test Tesla",
     "reference_value": 250.0,
     "token_address": ""
   },
   {
-    "ticker": "tNVDA",
-    "stock": "Test Nvidia",
-    "reference_value": 140.0,
+    "ticker": "tMETA",
+    "stock": "Test Meta",
+    "reference_value": 520.0,
     "token_address": ""
   }
 ]
-

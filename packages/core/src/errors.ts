@@ -23,7 +23,8 @@ export type CoreErrorCode =
   | "QUOTE_EXPIRED"
   | "QUOTE_MISMATCH"
   | "ZERO_OUTPUT"
-  | "INVALID_ROUND";
+  | "INVALID_ROUND"
+  | "INVALID_SIDE";
 
 export class CoreError extends Error {
   override readonly name = "CoreError";

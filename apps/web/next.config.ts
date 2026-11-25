@@ -1,4 +1,7 @@
 import type { NextConfig } from "next";
+import { fileURLToPath } from "node:url";
+
+const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
@@ -6,6 +9,12 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: ["127.0.0.1", "localhost"],
   typedRoutes: true,
   serverExternalPackages: ["pg"],
+  // Runtime deployment manifests live outside apps/web. Keep the tracing root at
+  // the repository root and include only the two approved manifest files.
+  outputFileTracingRoot: repositoryRoot,
+  outputFileTracingIncludes: {
+    "/*": ["../../deployments/base-sepolia.json", "../../deployments/local-anvil.json"],
+  },
   async headers() {
     return [
       {

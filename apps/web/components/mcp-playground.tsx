@@ -2,6 +2,10 @@
 
 import { useState } from "react";
 
+import { api } from "../lib/api";
+import { DEMO_ASSETS } from "../lib/demo/market";
+import { assetDisplayName, environmentShortLabel, priceSourceLabel } from "../lib/presentation";
+import { useAccount } from "./account-provider";
 import { CodeIcon, CopyIcon, CheckIcon, ArrowRight } from "./icons";
 
 const TOOL_OPTIONS = [
@@ -13,27 +17,32 @@ const TOOL_OPTIONS = [
 
 export function CopyButton({ value, label = "Copy" }: { value: string; label?: string }) {
   const [copied, setCopied] = useState(false);
+  const [failed, setFailed] = useState(false);
   return (
     <button
       className="copy-button"
       onClick={async () => {
+        setFailed(false);
         try {
           await navigator.clipboard.writeText(value);
           setCopied(true);
           setTimeout(() => setCopied(false), 1_600);
         } catch {
           setCopied(false);
+          setFailed(true);
         }
       }}
       type="button"
+      aria-live="polite"
     >
       {copied ? <CheckIcon size={13} /> : <CopyIcon size={13} />}
-      {copied ? "Copied" : label}
+      {failed ? "Copy failed" : copied ? "Copied" : label}
     </button>
   );
 }
 
 export function McpPlayground() {
+  const { environment } = useAccount();
   const [tool, setTool] = useState<string>(TOOL_OPTIONS[0]?.name ?? "kyrox_list_markets");
   const [symbol, setSymbol] = useState("tAAPL");
   const [side, setSide] = useState("buy");
@@ -55,9 +64,12 @@ export function McpPlayground() {
       Object.assign(args, { symbol, side, amount });
     }
     try {
-      const response = await fetch("/api/mcp", {
+      const payload = await api<{
+        result?: { structuredContent?: unknown; content?: Array<{ text?: string }> };
+        error?: { message?: string };
+      }>("/api/mcp", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        headers: { Accept: "application/json" },
         body: JSON.stringify({
           jsonrpc: "2.0",
           id: 1,
@@ -65,10 +77,6 @@ export function McpPlayground() {
           params: { name: tool, arguments: args },
         }),
       });
-      const payload = (await response.json()) as {
-        result?: { structuredContent?: unknown; content?: Array<{ text?: string }> };
-        error?: { message?: string };
-      };
       if (payload.error !== undefined) {
         setError(payload.error.message ?? "Tool call failed.");
       } else {
@@ -87,7 +95,7 @@ export function McpPlayground() {
       <div className="playground-controls">
         <label className="field">
           <span className="field-label">Tool</span>
-          <select value={tool} onChange={(event) => setTool(event.target.value)}>
+          <select value={tool} onChange={(event) => setTool(event.target.value)} disabled={busy}>
             {TOOL_OPTIONS.map((option) => (
               <option key={option.name} value={option.name}>
                 {option.name}
@@ -98,10 +106,16 @@ export function McpPlayground() {
         {(tool === "kyrox_get_market" || tool === "kyrox_preview_quote") && (
           <label className="field">
             <span className="field-label">Symbol</span>
-            <select value={symbol} onChange={(event) => setSymbol(event.target.value)}>
-              <option value="tAAPL">tAAPL</option>
-              <option value="tTSLA">tTSLA</option>
-              <option value="tNVDA">tNVDA</option>
+            <select
+              value={symbol}
+              onChange={(event) => setSymbol(event.target.value)}
+              disabled={busy}
+            >
+              {DEMO_ASSETS.map((asset) => (
+                <option key={asset.symbol} value={asset.symbol}>
+                  {assetDisplayName(asset.symbol)} · {asset.underlying}
+                </option>
+              ))}
             </select>
           </label>
         )}
@@ -109,35 +123,54 @@ export function McpPlayground() {
           <>
             <label className="field">
               <span className="field-label">Side</span>
-              <select value={side} onChange={(event) => setSide(event.target.value)}>
+              <select
+                value={side}
+                onChange={(event) => setSide(event.target.value)}
+                disabled={busy}
+              >
                 <option value="buy">buy</option>
                 <option value="sell">sell</option>
               </select>
             </label>
             <label className="field">
               <span className="field-label">Amount</span>
-              <input value={amount} onChange={(event) => setAmount(event.target.value)} />
+              <input
+                value={amount}
+                onChange={(event) => setAmount(event.target.value)}
+                inputMode="decimal"
+                disabled={busy}
+              />
             </label>
           </>
         )}
-        <button className="button button-primary" onClick={() => void run()} disabled={busy}>
+        <button
+          className="button button-primary"
+          onClick={() => void run()}
+          disabled={busy}
+          type="button"
+        >
           {busy ? "Calling…" : "Run tool"} <ArrowRight size={15} />
         </button>
       </div>
       <div className="playground-output">
         <div className="output-head">
-          <span>
+          <span title={`${environmentShortLabel(environment)} · ${priceSourceLabel(environment)}`}>
             <CodeIcon size={14} /> JSON-RPC response
           </span>
           <CopyButton value={output} label="Copy output" />
         </div>
-        <pre>
+        {error.length > 0 && (
+          <p className="form-error" role="alert" aria-live="assertive">
+            {error}
+          </p>
+        )}
+        <pre aria-live="polite">
           <code>
             {error.length > 0
-              ? `// ${error}`
+              ? "// Request failed. See the error above."
               : output.length > 0
                 ? output
-                : "// Choose a tool and run it to see a live response."}
+                : `// ${environmentShortLabel(environment)} · choose a tool and run it to see the response.`}
           </code>
         </pre>
       </div>

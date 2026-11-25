@@ -1,4 +1,10 @@
-import { createPublicClient, http, type Address, type Hex } from "viem";
+import {
+  TransactionReceiptNotFoundError,
+  createPublicClient,
+  http,
+  type Address,
+  type Hex,
+} from "viem";
 import { base } from "viem/chains";
 
 import { ERC20_METADATA_ABI, KYROX_EXCHANGE_ABI } from "@kyrox/protocol";
@@ -133,18 +139,23 @@ export function createSepoliaVerificationClient(rpcUrl: string): VerificationRpc
   return {
     getChainId: () => client.getChainId(),
     async getTransactionReceipt(txHash: Hex) {
-      const receipt = await client.getTransactionReceipt({ hash: txHash });
-      return {
-        status: receipt.status,
-        to: receipt.to,
-        blockNumber: receipt.blockNumber,
-        blockHash: receipt.blockHash,
-        logs: receipt.logs.map((log) => ({
-          address: log.address,
-          topics: log.topics,
-          data: log.data,
-        })),
-      };
+      try {
+        const receipt = await client.getTransactionReceipt({ hash: txHash });
+        return {
+          status: receipt.status,
+          to: receipt.to,
+          blockNumber: receipt.blockNumber,
+          blockHash: receipt.blockHash,
+          logs: receipt.logs.map((log) => ({
+            address: log.address,
+            topics: log.topics,
+            data: log.data,
+          })),
+        };
+      } catch (error) {
+        if (error instanceof TransactionReceiptNotFoundError) return null;
+        throw error;
+      }
     },
     async getTransaction(txHash: Hex) {
       const tx = await client.getTransaction({ hash: txHash });
@@ -155,13 +166,14 @@ export function createSepoliaVerificationClient(rpcUrl: string): VerificationRpc
       const block = await client.getBlock({ blockNumber });
       return { timestamp: Number(block.timestamp), hash: block.hash };
     },
-    async readObservation(exchange: Address, token: Address) {
+    async readObservation(exchange: Address, token: Address, blockNumber?: bigint) {
       const [price, roundId, sourceUpdatedAt, publishedAt, sourceChainId, feedAddress, simulated] =
         await client.readContract({
           address: exchange,
           abi: KYROX_EXCHANGE_ABI,
           functionName: "observation",
           args: [token],
+          ...(blockNumber !== undefined ? { blockNumber } : {}),
         });
       return {
         priceUsdcPerWholeToken: price,

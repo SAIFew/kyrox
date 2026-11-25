@@ -1,4 +1,5 @@
 export { IntentError, prepareTradeIntent } from "./intent.js";
+export type { CanonicalObservation, CanonicalObservationReader } from "./observation.js";
 export type {
   IntentErrorCode,
   PrepareTradeIntentParams,

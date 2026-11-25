@@ -37,5 +37,9 @@ export interface VerificationRpc {
   getTransaction(txHash: Hex): Promise<TransactionData | null>;
   getBlockNumber(): Promise<bigint>;
   getBlock(blockNumber: bigint): Promise<{ timestamp: number; hash: Hex }>;
-  readObservation(exchange: Address, token: Address): Promise<OnChainObservation>;
+  readObservation(
+    exchange: Address,
+    token: Address,
+    blockNumber?: bigint,
+  ): Promise<OnChainObservation>;
 }

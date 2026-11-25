@@ -1,5 +1,5 @@
 import type { Address } from "@kyrox/core";
-import type { Hex } from "viem";
+import { keccak256, toHex, type Hex } from "viem";
 
 import type { DeploymentRoles, ProposedDeploymentManifest } from "./deployment-plan.js";
 import type {
@@ -27,6 +27,8 @@ export interface PendingDeploymentRecord {
   readonly chainId: 84_532;
   readonly proposalHash: Hex;
   readonly createdAt: string;
+  /** Keccak-256 commitment to every verification-bound field below. */
+  readonly integrityHash: Hex;
   readonly roles: DeploymentRoles;
   readonly contracts: Readonly<Record<string, PendingContractRecord>>;
   readonly assets: Readonly<
@@ -48,6 +50,58 @@ export class ManifestActivationError extends Error {
   override readonly name = "ManifestActivationError";
 }
 
+type PendingIntegrityPayload = Omit<PendingDeploymentRecord, "integrityHash">;
+
+function pendingIntegrityPayload(record: PendingIntegrityPayload): PendingIntegrityPayload {
+  return {
+    environment: record.environment,
+    status: record.status,
+    planningStatus: record.planningStatus,
+    chainId: record.chainId,
+    proposalHash: record.proposalHash,
+    createdAt: record.createdAt,
+    roles: {
+      admin: record.roles.admin,
+      priceUpdater: record.roles.priceUpdater,
+      pauser: record.roles.pauser,
+      deployer: record.roles.deployer,
+    },
+    contracts: Object.fromEntries(
+      Object.entries(record.contracts)
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        .map(([name, contract]) => [
+          name,
+          {
+            address: contract.address,
+            transactionHash: contract.transactionHash,
+            runtimeBytecodeHash: contract.runtimeBytecodeHash,
+            blockNumber: contract.blockNumber,
+            blockHash: contract.blockHash,
+          },
+        ]),
+    ),
+    assets: Object.fromEntries(
+      Object.entries(record.assets)
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        .map(([symbol, asset]) => [
+          symbol,
+          {
+            stockToken: asset.stockToken,
+            decimals: asset.decimals,
+            maxSourceAgeSeconds: asset.maxSourceAgeSeconds,
+            maxPriceDeviationBps: asset.maxPriceDeviationBps,
+            minPriceUsdcPerWholeToken: asset.minPriceUsdcPerWholeToken,
+            maxPriceUsdcPerWholeToken: asset.maxPriceUsdcPerWholeToken,
+          },
+        ]),
+    ),
+  };
+}
+
+function pendingIntegrityHash(record: PendingIntegrityPayload): Hex {
+  return keccak256(toHex(JSON.stringify(pendingIntegrityPayload(record))));
+}
+
 export function buildPendingDeploymentRecord(params: {
   readonly proposal: ProposedDeploymentManifest;
   readonly proposalHash: Hex;
@@ -60,8 +114,17 @@ export function buildPendingDeploymentRecord(params: {
       "Deployment verification did not pass; no pending record may be recorded.",
     );
   }
-  if (params.evidence.proposalHash !== params.proposalHash) {
+  if (params.evidence.proposalHash.toLowerCase() !== params.proposalHash.toLowerCase()) {
     throw new ManifestActivationError("Evidence proposal hash does not match.");
+  }
+  if (
+    params.evidence.roles.admin.toLowerCase() !== params.proposal.roles.admin.toLowerCase() ||
+    params.evidence.roles.priceUpdater.toLowerCase() !==
+      params.proposal.roles.priceUpdater.toLowerCase() ||
+    params.evidence.roles.pauser.toLowerCase() !== params.proposal.roles.pauser.toLowerCase() ||
+    params.evidence.roles.deployer.toLowerCase() !== params.proposal.roles.deployer.toLowerCase()
+  ) {
+    throw new ManifestActivationError("Evidence roles do not match the proposal.");
   }
 
   const contracts: Record<string, PendingContractRecord> = {};
@@ -71,8 +134,11 @@ export function buildPendingDeploymentRecord(params: {
     if (evidence === undefined || verified === undefined) {
       throw new ManifestActivationError(`${step.name} has no verified deployment evidence.`);
     }
-    if (/^0x0{40}$/.test(evidence.address)) {
-      throw new ManifestActivationError(`${step.name} has a zero address.`);
+    if (!/^0x[0-9a-fA-F]{40}$/.test(evidence.address) || /^0x0{40}$/i.test(evidence.address)) {
+      throw new ManifestActivationError(`${step.name} has a zero or malformed address.`);
+    }
+    if (verified.address.toLowerCase() !== evidence.address.toLowerCase()) {
+      throw new ManifestActivationError(`${step.name} verification does not match its evidence.`);
     }
     contracts[step.name] = {
       address: evidence.address,
@@ -99,24 +165,38 @@ export function buildPendingDeploymentRecord(params: {
     };
   }
 
-  return {
+  const record: PendingDeploymentRecord = {
     environment: "base-sepolia",
     status: "verified_pending_activation",
     planningStatus: "not_deployed",
     chainId: 84_532,
     proposalHash: params.proposalHash,
     createdAt: params.createdAt,
+    integrityHash: `0x${"00".repeat(32)}`,
     roles: params.evidence.roles,
     contracts,
     assets,
   };
+  const committed: PendingDeploymentRecord = {
+    ...record,
+    integrityHash: pendingIntegrityHash(record),
+  };
+  validatePendingRecord(committed);
+  return committed;
 }
 
 export function validatePendingRecord(record: PendingDeploymentRecord): void {
+  if (!/^0x[0-9a-fA-F]{64}$/.test(record.integrityHash)) {
+    throw new ManifestActivationError("Pending record has no valid integrity hash.");
+  }
+  const { integrityHash, ...payload } = record;
+  if (integrityHash.toLowerCase() !== pendingIntegrityHash(payload).toLowerCase()) {
+    throw new ManifestActivationError("Pending record integrity hash does not match its contents.");
+  }
   if (record.environment !== "base-sepolia" || record.chainId !== 84_532) {
     throw new ManifestActivationError("Pending record is not Base Sepolia.");
   }
-  if (record.status !== "verified_pending_activation") {
+  if (record.status !== "verified_pending_activation" || record.planningStatus !== "not_deployed") {
     throw new ManifestActivationError("Pending record has not passed deployment verification.");
   }
   for (const [name, contract] of Object.entries(record.contracts)) {
@@ -126,10 +206,14 @@ export function validatePendingRecord(record: PendingDeploymentRecord): void {
     if (!/^0x[0-9a-fA-F]{64}$/.test(contract.transactionHash)) {
       throw new ManifestActivationError(`${name} has an invalid transaction hash.`);
     }
-    if (!/^0x[0-9a-fA-F]+$/.test(contract.runtimeBytecodeHash)) {
+    if (!/^0x[0-9a-fA-F]{64}$/.test(contract.runtimeBytecodeHash)) {
       throw new ManifestActivationError(`${name} has an invalid bytecode hash.`);
     }
-    if (!/^\d+$/.test(contract.blockNumber) || !/^0x[0-9a-fA-F]{64}$/.test(contract.blockHash)) {
+    if (
+      !/^[1-9]\d*$/.test(contract.blockNumber) ||
+      !Number.isSafeInteger(Number(contract.blockNumber)) ||
+      !/^0x[0-9a-fA-F]{64}$/.test(contract.blockHash)
+    ) {
       throw new ManifestActivationError(`${name} has invalid inclusion block evidence.`);
     }
   }
@@ -142,19 +226,38 @@ export function validatePendingRecord(record: PendingDeploymentRecord): void {
     throw new ManifestActivationError("Pending record has no verified assets.");
   }
   for (const [symbol, asset] of Object.entries(record.assets)) {
+    const contract = record.contracts[`TestStock:${symbol}`];
     if (
+      contract === undefined ||
+      contract.address.toLowerCase() !== asset.stockToken.toLowerCase()
+    ) {
+      throw new ManifestActivationError(`${symbol} is not bound to its verified token.`);
+    }
+    if (
+      !Number.isInteger(asset.decimals) ||
+      asset.decimals <= 0 ||
+      asset.decimals > 77 ||
       !Number.isInteger(asset.maxSourceAgeSeconds) ||
       asset.maxSourceAgeSeconds <= 0 ||
+      asset.maxSourceAgeSeconds > 604_800 ||
       !Number.isInteger(asset.maxPriceDeviationBps) ||
       asset.maxPriceDeviationBps <= 0 ||
       asset.maxPriceDeviationBps > 10_000 ||
       typeof asset.minPriceUsdcPerWholeToken !== "string" ||
-      typeof asset.maxPriceUsdcPerWholeToken !== "string"
+      typeof asset.maxPriceUsdcPerWholeToken !== "string" ||
+      !/^[1-9]\d*$/.test(asset.minPriceUsdcPerWholeToken) ||
+      !/^[1-9]\d*$/.test(asset.maxPriceUsdcPerWholeToken) ||
+      BigInt(asset.minPriceUsdcPerWholeToken) > BigInt(asset.maxPriceUsdcPerWholeToken)
     ) {
       throw new ManifestActivationError(`${symbol} is missing a complete verified configuration.`);
     }
   }
-  if (/^0x0{64}$/.test(record.proposalHash)) {
+  for (const role of Object.values(record.roles)) {
+    if (!/^0x[0-9a-fA-F]{40}$/.test(role) || /^0x0{40}$/i.test(role)) {
+      throw new ManifestActivationError("Pending record has an invalid role address.");
+    }
+  }
+  if (!/^0x[0-9a-fA-F]{64}$/.test(record.proposalHash) || /^0x0{64}$/i.test(record.proposalHash)) {
     throw new ManifestActivationError("Pending record has no proposal hash.");
   }
 }

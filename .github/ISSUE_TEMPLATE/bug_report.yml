@@ -9,13 +9,17 @@ body:
         Thank you for helping test **KYROX** on **Base Sepolia testnet (`chainId: 84532`)**.
         To help us reproduce and resolve your issue quickly, please complete the fields below with exact, verifiable details.
 
+        ### Rewards, Scope & Disclosure
+        - **Programme rules and reward amounts:** see [`BOUNTY.md`](../../BOUNTY.md). The root copy is canonical for this unified repository.
+        - **This form is for reproducible, non-security bugs.** Issues in third-party dependencies, RPC downtime, or out-of-scope mainnet features may be closed without an award.
+
         ### Mandatory Security & Privacy Warnings
         - **Never upload private keys.**
         - **Never upload recovery phrases (seed phrases / mnemonics).**
         - **Never upload `.env` or `.env.local` files.**
         - **Never upload credentials or API secrets.**
         - **Do not include personal information that is not necessary.**
-        - **Security vulnerabilities must be disclosed privately using the procedure in `SECURITY.md`, not posted as public exploit details.**
+        - **Security vulnerabilities must be disclosed privately using the procedure in [`SECURITY.md`](../../SECURITY.md), not posted as public exploit details.**
 
   - type: dropdown
     id: component
@@ -30,6 +34,7 @@ body:
         - packages/contracts (Foundry Smart Contracts)
         - packages/db (Drizzle Database Schema & Migrations)
         - services/price & services/trade-intent (Price Ingestion & Trade Intent)
+        - services/indexer or /admin (Trade/Claim Indexing & Operator Dashboard)
         - content/* (Remotion Films & Design Assets)
         - CI / Monorepo Tooling
     validations:

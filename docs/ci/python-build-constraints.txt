@@ -1,0 +1,7 @@
+# CI-only Python build tooling. Runtime and test dependencies are pinned in
+# services/mcp-server/requirements-lock.txt; CI combines both files so isolated
+# PEP 517 builds and verification virtual environments use the same constraints.
+build==1.4.4
+pip==26.0.1
+setuptools==82.0.1
+wheel==0.48.0

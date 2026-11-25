@@ -5,7 +5,7 @@ import { PortfolioView } from "../../components/portfolio-view";
 export const metadata: Metadata = {
   title: "Portfolio",
   description:
-    "Inspect balances, allocation, and simulated 24h movement in the KYROX public preview.",
+    "Inspect testnet balances, allocation, reference-price movement, and explicitly labelled simulated average cost and P&L in KYROX.",
 };
 
 export default function PortfolioPage() {

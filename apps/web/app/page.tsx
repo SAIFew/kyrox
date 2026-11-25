@@ -2,6 +2,11 @@ import Link from "next/link";
 
 import { HeroMarket, LandingMarkets } from "../components/live-markets";
 import {
+  LandingEnvironmentDisclosure,
+  LandingNetworkLabel,
+  LandingStatusGrid,
+} from "../components/environment-labels";
+import {
   ArrowRight,
   ArrowUpRight,
   ChartIcon,
@@ -31,7 +36,7 @@ const STEPS = [
   {
     step: "04",
     title: "Authorise in your wallet",
-    body: "Your wallet is the only signer. The preview venue simulates the fill; a deployed venue would settle on Base Sepolia.",
+    body: "Your wallet is the only signer. The demo venue simulates the fill; a testnet venue settles on its configured chain.",
   },
 ] as const;
 
@@ -44,7 +49,7 @@ const PILLARS = [
   {
     icon: ShieldIcon,
     title: "Policy before execution",
-    body: "Minimum and maximum size, a 5,000 tUSDC daily cap, asset allowlists, pause state, and fresh prices are enforced in code.",
+    body: "Minimum and maximum size, a 5,000 test USDC unit daily cap, asset allowlists, pause state, and fresh prices are enforced in code.",
   },
   {
     icon: LockIcon,
@@ -56,15 +61,6 @@ const PILLARS = [
     title: "Agent-ready boundary",
     body: "A read-only MCP bridge exposes markets, history, quotes, and status. There is no sign, send, transfer, or arbitrary-calldata tool.",
   },
-] as const;
-
-const STATUS = [
-  ["Consumer application", "Live preview", "live"],
-  ["Reference market data", "Simulated feed", "sim"],
-  ["Deterministic quote engine", "Implemented", "live"],
-  ["Agent bridge (MCP)", "Read-only, live", "live"],
-  ["Base Sepolia contracts", "Not deployed", "off"],
-  ["Mainnet trading", "Not available", "off"],
 ] as const;
 
 export default function HomePage() {
@@ -95,13 +91,10 @@ export default function HomePage() {
                 <CodeIcon size={16} /> Agent bridge
               </Link>
             </div>
-            <div className="hero-disclosure">
-              <span className="pulse-dot" />
-              <span>
-                <strong>Public preview.</strong> Prices are simulated, contracts are not deployed,
-                and testnet assets have no cash value.
-              </span>
-            </div>
+            <LandingEnvironmentDisclosure />
+            <p className="muted small">
+              Test tokens. No real value. Not real shares. Not investment advice.
+            </p>
             <dl className="hero-metrics">
               <div>
                 <dt>Quote engine</dt>
@@ -140,7 +133,7 @@ export default function HomePage() {
           </div>
         </div>
         <div className="page-width trust-strip">
-          <span>Built for Base Sepolia</span>
+          <LandingNetworkLabel />
           <span className="trust-sep" />
           <span>Deterministic policy engine</span>
           <span className="trust-sep" />
@@ -154,7 +147,7 @@ export default function HomePage() {
         <div className="section-head">
           <div>
             <p className="eyebrow">Reference markets</p>
-            <h2>Three instruments. One honest venue.</h2>
+            <h2>Seven instruments. One honest venue.</h2>
           </div>
           <Link className="text-link" href="/markets">
             View all markets <ArrowUpRight size={15} />
@@ -284,27 +277,17 @@ export default function HomePage() {
             Full status page <ArrowUpRight size={15} />
           </Link>
         </div>
-        <div className="status-grid">
-          {STATUS.map(([label, value, tone]) => (
-            <div className="status-tile" key={label}>
-              <span className={`status-light ${tone}`} />
-              <div>
-                <strong>{label}</strong>
-                <span>{value}</span>
-              </div>
-            </div>
-          ))}
-        </div>
+        <LandingStatusGrid />
       </section>
 
       <section className="section page-width">
         <div className="cta-panel">
           <div>
-            <p className="eyebrow">Start with the preview</p>
+            <p className="eyebrow">Start with the workflow</p>
             <h2>See the full workflow today.</h2>
             <p>
-              Open a simulated account with 25,000 tUSDC, review quotes, execute simulated fills,
-              and inspect every provenance label — no wallet or database required.
+              Use the simulated preview account where available, or connect a testnet wallet. Review
+              quotes, follow the authorised flow, and inspect every provenance label.
             </p>
           </div>
           <div className="cta-actions">

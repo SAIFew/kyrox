@@ -69,13 +69,21 @@ describe("deployment plan", () => {
     expect(plan.steps[0]?.constructorArgs).toEqual([ADMIN]);
     expect(plan.steps[1]?.constructorArgs).toEqual(["Test Apple", "tAAPL", 18, ADMIN]);
     expect(plan.steps[2]?.constructorArgs).toEqual(["{{TestUSDC}}", ADMIN]);
-    expect(plan.steps[2]?.dependencies).toEqual(["TestUSDC"]);
+    expect(plan.steps[2]?.dependencies).toEqual(["TestUSDC", "TestStock:tAAPL"]);
+    expect(plan.steps[1]?.postDeployment).toEqual([]);
+    expect(plan.steps[2]?.postDeployment.join(" ")).toContain(
+      "KyroxExchange.listAsset({{TestStock:tAAPL}}",
+    );
+    expect(plan.steps[2]?.postDeployment.join(" ")).toContain(
+      "KyroxExchange.setPriceBounds({{TestStock:tAAPL}}",
+    );
   });
 
   it("includes role grants, asset configuration and independent keys", () => {
     const plan = buildDeploymentPlan(input);
     expect(plan.roleGrants).toContain(`KyroxExchange.grantRole(PRICE_UPDATER_ROLE, ${UPDATER})`);
     expect(plan.roleGrants).toContain(`KyroxExchange.grantRole(PAUSER_ROLE, ${PAUSER})`);
+    expect(plan.assetConfiguration[0]).toContain("KyroxExchange.listAsset({{TestStock:tAAPL}}");
     expect(plan.assetConfiguration[0]).toContain("maxSourceAge=3600");
     expect(plan.assetConfiguration[0]).toContain("deviation=500bps");
     expect(plan.warnings).toEqual([]);
@@ -123,5 +131,25 @@ describe("deployment plan", () => {
     const plan = buildDeploymentPlan({ ...input, gasEstimates: { TestUSDC: "12345" } });
     expect(plan.steps[0]?.estimatedGas).toBe("12345");
     expect(plan.manifest.contracts[0]?.estimatedGas).toBe("12345");
+  });
+
+  it("reports gas estimate failures instead of silently discarding them", () => {
+    const plan = buildDeploymentPlan({
+      ...input,
+      gasEstimates: { TestUSDC: null },
+      gasEstimateFailures: { TestUSDC: "insufficient deployer balance" },
+    });
+    expect(plan.gasEstimateFailures["TestUSDC"]).toBe("insufficient deployer balance");
+    expect(plan.steps[0]?.estimatedGasNote).toBe("insufficient deployer balance");
+    expect(plan.manifest.contracts[0]?.estimatedGasNote).toBe("insufficient deployer balance");
+    expect(plan.warnings.join(" ")).toContain("Gas estimate unavailable for TestUSDC");
+  });
+
+  it("rejects malformed gas estimates", () => {
+    for (const estimatedGas of ["0", "-1", "1.5", "NaN", "9007199254740992"]) {
+      expect(() =>
+        buildDeploymentPlan({ ...input, gasEstimates: { TestUSDC: estimatedGas } }),
+      ).toThrow(DeploymentPlanError);
+    }
   });
 });

@@ -1,0 +1,25 @@
+{
+  "name": "kyrox-showcase-vertical",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Evidence-backed vertical KYROX product showcase rendered with Remotion.",
+  "scripts": {
+    "preview": "remotion studio src/index.ts",
+    "render": "remotion render src/index.ts KyroxShowcaseVertical output/KYROX-Product-Showcase.mp4 --codec h264 --crf 17 --concurrency=2",
+    "poster": "remotion still src/index.ts KyroxShowcaseVertical output/KYROX-Product-Showcase-Poster.png --frame=330",
+    "contact-sheet": "ffmpeg -hide_banner -loglevel error -i output/KYROX-Product-Showcase.mp4 -vf \"fps=1/2,scale=216:-1,tile=5x3:padding=12:margin=12\" -frames:v 1 output/KYROX-Product-Showcase-Contact-Sheet.png",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.373",
+    "@remotion/renderer": "4.0.373",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "remotion": "4.0.373"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "typescript": "5.9.3"
+  }
+}

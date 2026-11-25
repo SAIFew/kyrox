@@ -16,7 +16,7 @@ const upRound: LatestRoundData = {
   roundId: 18_446_744_073_709_551_636n,
   answer: 0n,
   startedAt: BigInt(NOW - 2 * 86_400),
-  updatedAt: BigInt(NOW - 3_600),
+  updatedAt: BigInt(NOW - 3_601),
   answeredInRound: 18_446_744_073_709_551_636n,
 };
 
@@ -42,8 +42,18 @@ describe("ChainlinkSequencerUptimeReader", () => {
     expect(status.gracePeriodSeconds).toBe(SEQUENCER_GRACE_PERIOD_SECONDS);
     expect(status.gracePeriodElapsed).toBe(true);
     expect(status.healthy).toBe(true);
-    expect(status.sourceUpdatedAt).toBe(NOW - 3_600);
+    expect(status.sourceUpdatedAt).toBe(NOW - 3_601);
     expect(status.observedAt).toBe(NOW);
+  });
+
+  it("keeps the exact grace boundary closed", async () => {
+    const reader = new ChainlinkSequencerUptimeReader(
+      client({ readLatestRoundData: async () => ({ ...upRound, updatedAt: BigInt(NOW - 3_600) }) }),
+      () => NOW,
+    );
+    const status = await reader.read();
+    expect(status.gracePeriodElapsed).toBe(false);
+    expect(status.healthy).toBe(false);
   });
 
   it("fails closed during the recovery grace period", async () => {

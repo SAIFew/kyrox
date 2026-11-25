@@ -21,12 +21,22 @@ const baseAsset: AssetDefinition = {
 };
 
 describe("asset definitions", () => {
-  it("ships the three Phase 0 testnet assets with 18 decimals and no invented addresses", () => {
-    expect(TESTNET_ASSETS.map((asset) => asset.symbol)).toEqual(["tAAPL", "tTSLA", "tNVDA"]);
+  it("ships the seven Phase 0 testnet assets with 18 decimals and no invented addresses", () => {
+    expect(TESTNET_ASSETS.map((asset) => asset.symbol)).toEqual([
+      "tAAPL",
+      "tNVDA",
+      "tMSFT",
+      "tGOOGL",
+      "tAMZN",
+      "tTSLA",
+      "tMETA",
+    ]);
     for (const asset of TESTNET_ASSETS) {
       expect(asset.stockDecimals).toBe(18);
       expect(asset.stockToken).toBeNull();
       expect(asset.priceSourceKind).toBe("simulated");
+      expect(asset.listed).toBe(true);
+      expect(asset.name.startsWith("Test ")).toBe(true);
     }
   });
 
@@ -50,6 +60,9 @@ describe("asset definitions", () => {
     expect(() => assertAssetDefinition({ ...baseAsset, stockDecimals: 12 as never })).toThrow(
       CoreError,
     );
+    expect(() =>
+      assertAssetDefinition({ ...baseAsset, priceSourceKind: "unknown" as never }),
+    ).toThrow(CoreError);
   });
 
   it("rejects duplicate symbols", () => {
@@ -58,10 +71,11 @@ describe("asset definitions", () => {
 
   it("fails closed for unknown symbols", () => {
     expect(testnetAssetRegistry.has("tAAPL")).toBe(true);
-    expect(testnetAssetRegistry.has("tMSFT")).toBe(false);
-    expect(() => testnetAssetRegistry.get("tMSFT")).toThrow(CoreError);
+    expect(testnetAssetRegistry.has("tMSFT")).toBe(true);
+    expect(testnetAssetRegistry.has("tDOGE")).toBe(false);
+    expect(() => testnetAssetRegistry.get("tDOGE")).toThrow(CoreError);
     try {
-      testnetAssetRegistry.get("tMSFT");
+      testnetAssetRegistry.get("tDOGE");
     } catch (error) {
       expect((error as CoreError).code).toBe("UNSUPPORTED_ASSET");
     }

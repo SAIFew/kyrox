@@ -7,6 +7,7 @@ import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.s
 
 import { BaseTest } from "./BaseTest.sol";
 import { FeeOnTransferStock } from "./mocks/FeeOnTransferStock.sol";
+import { IncorrectMintStock } from "./mocks/IncorrectMintStock.sol";
 import { ReentrantStock } from "./mocks/ReentrantStock.sol";
 import { IKyroxPriceSource } from "../src/interfaces/IKyroxPriceSource.sol";
 import { KyroxExchange } from "../src/KyroxExchange.sol";
@@ -313,6 +314,39 @@ contract KyroxExchange_Test is BaseTest {
         assertEq(stock18.totalSupply(), 1e18);
     }
 
+    function test_BuyRejectsIncorrectMintBalanceDelta() public {
+        IncorrectMintStock token = new IncorrectMintStock();
+        vm.startPrank(admin);
+        exchange.listAsset(address(token), MAX_SOURCE_AGE, 1, 1e30);
+        vm.stopPrank();
+        _publishPrice(address(token), PRICE_230, 1);
+        _fundAndApprove(alice, type(uint256).max);
+
+        uint256 expected = exchange.quoteBuy(address(token), 230e6);
+        uint256 usdcBefore = usdc.balanceOf(alice);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                KyroxExchange.UnexpectedMintAmount.selector, expected, expected - 1
+            )
+        );
+        vm.prank(alice);
+        exchange.buy(address(token), 230e6, 0, type(uint256).max);
+
+        token.setOverMint(true);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                KyroxExchange.UnexpectedMintAmount.selector, expected, expected + 1
+            )
+        );
+        vm.prank(alice);
+        exchange.buy(address(token), 230e6, 0, type(uint256).max);
+
+        assertEq(token.balanceOf(alice), 0, "failed mint must roll back");
+        assertEq(token.totalSupply(), 0, "failed mint must roll back supply");
+        assertEq(usdc.balanceOf(alice), usdcBefore, "failed mint must roll back settlement burn");
+    }
+
     function test_BuyHonoursTokenDecimals() public {
         TestStock six = _newListedStock(6);
         TestStock eight = _newListedStock(8);
@@ -424,6 +458,33 @@ contract KyroxExchange_Test is BaseTest {
 
         assertEq(usdc.balanceOf(address(exchange)), 0);
         assertEq(stock18.balanceOf(address(exchange)), 0);
+    }
+
+    function test_TradingRechecksStoredPriceAgainstCurrentBounds() public {
+        _fundAndApprove(alice, type(uint256).max);
+        vm.startPrank(alice);
+        exchange.buy(address(stock18), 230e6, 0, type(uint256).max);
+        stock18.approve(address(exchange), type(uint256).max);
+        vm.stopPrank();
+
+        vm.prank(admin);
+        exchange.setPriceBounds(address(stock18), 240e6, 300e6, 0);
+
+        vm.startPrank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                KyroxExchange.PriceOutsideBounds.selector, PRICE_230, 240e6, 300e6
+            )
+        );
+        exchange.buy(address(stock18), 1e6, 0, type(uint256).max);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                KyroxExchange.PriceOutsideBounds.selector, PRICE_230, 240e6, 300e6
+            )
+        );
+        exchange.sell(address(stock18), 1e18, 0, type(uint256).max);
+        vm.stopPrank();
     }
 
     function test_SetPriceAcceptsNewRoundWithEqualSourceTimestamp() public {
@@ -717,6 +778,38 @@ contract KyroxExchange_Test is BaseTest {
 
         exchange.setPrice(address(guarded), 250e6, 2, block.timestamp - 1, 84532, address(0), true);
         assertEq(exchange.observation(address(guarded)).priceUsdcPerWholeToken, 250e6);
+        vm.stopPrank();
+    }
+
+    function test_DeviationGuardUsesFullWidthRatioAtLargePrices() public {
+        TestStock guarded = new TestStock("Wide Guarded", "tWIDE", 18, admin);
+        vm.startPrank(admin);
+        exchange.listAsset(address(guarded), MAX_SOURCE_AGE, 1, type(uint256).max);
+        exchange.setPriceBounds(address(guarded), 1, type(uint256).max, 5_000);
+        vm.stopPrank();
+
+        uint256 previousPrice = type(uint256).max / 20_000;
+        uint256 rejectedPrice = previousPrice * 2;
+        vm.startPrank(updater);
+        exchange.setPrice(
+            address(guarded), previousPrice, 1, block.timestamp - 1, 84532, address(0), true
+        );
+
+        // The former difference * 10_000 comparison overflowed here.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                KyroxExchange.PriceDeviationExceeded.selector, rejectedPrice, previousPrice, 5_000
+            )
+        );
+        exchange.setPrice(
+            address(guarded), rejectedPrice, 2, block.timestamp - 1, 84532, address(0), true
+        );
+
+        uint256 boundaryPrice = previousPrice + (previousPrice * 5_000) / 10_000;
+        exchange.setPrice(
+            address(guarded), boundaryPrice, 2, block.timestamp - 1, 84532, address(0), true
+        );
+        assertEq(exchange.observation(address(guarded)).priceUsdcPerWholeToken, boundaryPrice);
         vm.stopPrank();
     }
 

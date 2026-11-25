@@ -81,6 +81,12 @@ describe("amount validation", () => {
     expect(() => calculateBuyStockOut(MAX_UINT256 + 1n, PRICE, 18)).toThrow(CoreError);
     expect(() => calculateBuyStockOut(MAX_UINT256, 1n, 18)).toThrow(CoreError);
   });
+
+  it("rejects invalid decimals and non-bigint prices at runtime", () => {
+    expect(() => calculateBuyStockOut(USDC, PRICE, 12)).toThrow(CoreError);
+    expect(() => calculateSellUsdcOut(USDC, PRICE, Number.NaN)).toThrow(CoreError);
+    expect(() => calculateBuyStockOut(USDC, "230" as unknown as bigint, 18)).toThrow(CoreError);
+  });
 });
 
 describe("minimum output", () => {
@@ -113,10 +119,18 @@ describe("quotes", () => {
     expect(quote.priceUsdcPerWholeToken).toBe(PRICE);
     expect(quote.sourceRoundId).toBe(11n);
     expect(quote.sourceUpdatedAt).toBe(NOW - 5);
-    expect(quote.expiresAt).toBe(NOW + 60);
+    expect(quote.expiresAt).toBe(NOW + 30);
     expect(quote.amountOut).toBe(4_347_826_086_956_521n);
     expect(quote.minAmountOut).toBe(4_326_086_956_521_738n);
     expect(quote.freshness.fresh).toBe(true);
+    expect(quote.sourceChainId).toBe(observation().sourceChainId);
+    expect(quote.feedAddress).toBeNull();
+  });
+
+  it("rejects an invalid runtime side instead of treating it as a sell", () => {
+    expect(() => buildQuote({ side: "BUY" as never })).toThrowError(
+      expect.objectContaining({ code: "INVALID_SIDE" }),
+    );
   });
 
   it("quotes sells on the USDC side", () => {
@@ -164,6 +178,9 @@ describe("quotes", () => {
         }),
       ),
     ).toThrow(CoreError);
+    expect(() => quoteNotionalUsdc({ ...buildQuote(), side: "hold" as never })).toThrow(
+      expect.objectContaining({ code: "INVALID_SIDE" }),
+    );
   });
 
   it("refuses a simulated observation that carries a feed address", () => {

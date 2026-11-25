@@ -434,7 +434,7 @@ def test_prepare_transaction_rejects_missing_ticker(
     get_web3_mock.assert_not_called()
 
 
-@pytest.mark.parametrize("unknown_ticker", ["UNKNOWN", "AAPL", "tMSFT", "BTC"])
+@pytest.mark.parametrize("unknown_ticker", ["UNKNOWN", "AAPL", "tDOGE", "BTC"])
 def test_prepare_transaction_rejects_unsupported_ticker(
     unknown_ticker: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:

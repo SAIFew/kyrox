@@ -95,7 +95,8 @@ of scope.
   oracle. This must be labelled everywhere.
 - The 24/7 smoothed feeds are not yet verified for the chosen assets, chain, or
   feed type. Do not assume availability.
-- Contract code and the exchange are not implemented or audited.
+- Local exchange and test-token implementations plus automated tests exist, but
+  no independent audit evidence or Sepolia deployment is recorded in the repo.
 - No production key-management or incident-response process exists yet.
 
 ## 7. Out of scope

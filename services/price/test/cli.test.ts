@@ -25,6 +25,7 @@ const config = {
   assetSymbols: ["tAAPL"] as const,
   maxSourceAgeSeconds: 600,
   manifestPath: "deployments/local-anvil.json",
+  pricePublicationEnabled: true,
 };
 
 const healthy: SequencerStatus = {
@@ -96,7 +97,7 @@ describe("price:ingest configuration", () => {
       parseIngestConfig({
         BASE_MAINNET_RPC_URL: "https://x",
         DATABASE_URL: "postgres://x",
-        PRICE_ALLOWED_TICKERS: "tMSFT",
+        PRICE_ALLOWED_TICKERS: "tDOGE",
       }),
     ).toThrow(ConfigError);
   });
@@ -126,8 +127,26 @@ describe("price:ingest configuration", () => {
       PRICE_ALLOWED_TICKERS: "tAAPL, tNVDA",
     });
     expect(parsed.assetSymbols).toEqual(["tAAPL", "tNVDA"]);
-    expect(parsed.maxSourceAgeSeconds).toBe(3_600);
+    expect(parsed.maxSourceAgeSeconds).toBe(600);
+    expect(parsed.pricePublicationEnabled).toBe(false);
     expect(parsed.manifestPath).toBe("deployments/base-sepolia.json");
+  });
+
+  it("requires an explicit boolean for publication and enables it only on opt-in", () => {
+    const base = {
+      BASE_MAINNET_RPC_URL: "https://x",
+      DATABASE_URL: "postgres://x",
+      PRICE_ALLOWED_TICKERS: "tAAPL",
+    };
+    expect(
+      parseIngestConfig({ ...base, PRICE_PUBLICATION_ENABLED: "true" }).pricePublicationEnabled,
+    ).toBe(true);
+    expect(
+      parseIngestConfig({ ...base, PRICE_PUBLICATION_ENABLED: "false" }).pricePublicationEnabled,
+    ).toBe(false);
+    expect(() => parseIngestConfig({ ...base, PRICE_PUBLICATION_ENABLED: "maybe" })).toThrow(
+      ConfigError,
+    );
   });
 });
 
@@ -169,6 +188,31 @@ describe("price:ingest one-shot run", () => {
     expect(args[5]).toBe(ZERO);
     expect(args[6]).toBe(true);
     expect(exitCodeFor(report)).toBe(0);
+  });
+
+  it("ingests but explicitly reports publication disabled by default", async () => {
+    const store = new InMemoryObservationStore();
+    const loadManifest = vi.fn(() => localManifest);
+    const report = await runIngestOnce(
+      { ...config, pricePublicationEnabled: false },
+      {
+        reader: readerFor({ tAAPL: observation() }),
+        sequencer: sequencer(healthy),
+        store,
+        loadManifest,
+        nowSeconds: () => NOW,
+      },
+    );
+
+    expect(report.status).toBe("ok");
+    expect(report.ingestion.published).toBe(1);
+    expect(report.publication).toEqual({ enabled: false });
+    expect(report.publications[0]).toMatchObject({
+      status: "disabled",
+      reason: expect.stringContaining("PRICE_PUBLICATION_ENABLED"),
+    });
+    expect(loadManifest).not.toHaveBeenCalled();
+    expect(store.publications).toHaveLength(0);
   });
 
   it("reports blocked publication when no manifest exists but ingestion succeeds", async () => {

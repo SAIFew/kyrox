@@ -2,25 +2,41 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { encodeFunctionData } from "viem";
+import { encodeFunctionData, isAddress, zeroAddress } from "viem";
 
 import { api } from "../lib/api";
+import { FAUCET_CLAIMS, faucetClaim, faucetEligibility, type FaucetClaimKind } from "../lib/faucet";
 import {
+  assetDisplayName,
+  balanceQualification,
+  environmentDisclosure,
+  environmentLabel,
+  isDemoEnvironment,
+  settlementDisplayName,
+} from "../lib/presentation";
+import {
+  formatNumber,
   formatPct,
   formatPrice,
   formatTokenAmount,
   pctTone,
   shortAddress,
   timeAgo,
+  toNumber,
 } from "../lib/format";
-import { sendTransaction } from "../lib/wallet";
+import {
+  resolveWalletNetwork,
+  sendTransaction,
+  waitForTransactionReceipt,
+  walletErrorMessage,
+} from "../lib/wallet";
 import { useAccount } from "./account-provider";
+import { ShareCardActions } from "./share-card-actions";
 import { ActivityList } from "./activity-view";
 import {
   ArrowRight,
   ArrowUpRight,
   InfoIcon,
-  PlusIcon,
   RefreshIcon,
   ShieldIcon,
   SparkIcon,
@@ -35,6 +51,13 @@ const CLAIM_ABI = [
     inputs: [],
     outputs: [],
   },
+  {
+    type: "function",
+    name: "claimDaily",
+    stateMutability: "nonpayable",
+    inputs: [],
+    outputs: [],
+  },
 ] as const;
 
 function Donut({
@@ -45,6 +68,9 @@ function Donut({
   const radius = 58;
   const circumference = 2 * Math.PI * radius;
   let offset = 0;
+  const validSlices = slices.filter(
+    (slice) => Number.isFinite(slice.sharePct) && slice.sharePct >= 0,
+  );
   return (
     <div className="donut-wrap">
       <svg viewBox="0 0 150 150" className="donut" role="img" aria-label="Portfolio allocation">
@@ -56,7 +82,7 @@ function Donut({
           stroke="rgba(255,255,255,0.05)"
           strokeWidth="16"
         />
-        {slices.map((slice) => {
+        {validSlices.map((slice) => {
           const length = (slice.sharePct / 100) * circumference;
           const dash = `${Math.max(0, length - 2)} ${circumference}`;
           const element = (
@@ -80,7 +106,7 @@ function Donut({
       </svg>
       <div className="donut-center">
         <span>Assets</span>
-        <strong>{slices.length}</strong>
+        <strong>{validSlices.length}</strong>
       </div>
     </div>
   );
@@ -93,24 +119,31 @@ export function PortfolioView() {
     environment,
     portfolio,
     activity,
+    activityStale,
     openAuth,
     refreshAll,
     error: accountError,
   } = useAccount();
   const [localBusy, setLocalBusy] = useState("");
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [faucetHash, setFaucetHash] = useState<string | null>(null);
+  const demo = isDemoEnvironment(environment);
+  const claimEligibility = faucetEligibility(environment, session);
+  const canClaim = claimEligibility.allowed;
 
   async function resetPreview() {
+    if (session === null || !isDemoEnvironment(environment)) return;
     setLocalBusy("reset");
     setError("");
+    setNotice("");
     try {
-      const response = await fetch("/api/auth/demo", {
+      await api("/api/auth/demo", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ reset: true }),
       });
-      if (!response.ok) throw new Error("Could not reset the preview account.");
       await refreshAll();
+      setNotice("Preview balances and activity were reset.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not reset the preview account.");
     } finally {
@@ -118,23 +151,66 @@ export function PortfolioView() {
     }
   }
 
-  async function claimFaucet() {
-    if (session === null) return;
-    setLocalBusy("faucet");
+  async function claimFaucet(kind: FaucetClaimKind) {
+    const claim = faucetClaim(kind);
+    if (session === null || environment === null) return;
+    const eligibility = faucetEligibility(environment, session);
+    if (!eligibility.allowed) {
+      setError(eligibility.reason ?? "The faucet is unavailable in this environment.");
+      return;
+    }
+    const busyPrefix = `faucet-${kind}`;
+    let phase: "assets" | "wallet" | "receipt" | "refresh" = "assets";
+    let submittedHash: `0x${string}` | null = null;
+    setLocalBusy(`${busyPrefix}-assets`);
     setError("");
+    setNotice("");
+    setFaucetHash(null);
     try {
       const assets = await api<{ settlement: string }>("/api/assets");
-      await sendTransaction({
+      if (!isAddress(assets.settlement) || assets.settlement.toLowerCase() === zeroAddress) {
+        throw new Error("The test settlement token address is unavailable.");
+      }
+      const network = resolveWalletNetwork(environment);
+      phase = "wallet";
+      setLocalBusy(`${busyPrefix}-wallet`);
+      const hash = await sendTransaction({
         from: session.address as `0x${string}`,
         to: assets.settlement as `0x${string}`,
-        data: encodeFunctionData({ abi: CLAIM_ABI, functionName: "claimWelcome" }),
+        data: encodeFunctionData({ abi: CLAIM_ABI, functionName: claim.functionName }),
+        value: "0x0",
+        network,
       });
+      submittedHash = hash;
+      setFaucetHash(hash);
+      phase = "receipt";
+      setLocalBusy(`${busyPrefix}-receipt`);
+      await waitForTransactionReceipt(hash);
+      setNotice(
+        `${claim.title} confirmed: ${claim.amountLabel} on ${environmentLabel(environment)}.`,
+      );
+      phase = "refresh";
       await refreshAll();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Faucet request failed.");
+      const message = walletErrorMessage(err);
+      setError(
+        submittedHash === null
+          ? `${phase === "wallet" ? `${claim.title} transaction failed` : `${claim.title} preparation failed`}: ${message}`
+          : phase === "refresh"
+            ? `${claim.title} transaction ${shortAddress(submittedHash)} was confirmed, but account data could not refresh. Do not resend. ${message}`
+            : `${claim.title} transaction ${shortAddress(submittedHash)} was submitted, but its receipt could not be verified. Do not resend until the wallet confirms it. ${message}`,
+      );
     } finally {
       setLocalBusy("");
     }
+  }
+
+  function faucetBusyLabel(kind: FaucetClaimKind): string {
+    if (!localBusy.startsWith(`faucet-${kind}`)) return "Claim";
+    if (localBusy.endsWith("-assets")) return "Preparing…";
+    if (localBusy.endsWith("-wallet")) return "Waiting for wallet…";
+    if (localBusy.endsWith("-receipt")) return "Confirming…";
+    return "Refreshing…";
   }
 
   if (!ready) {
@@ -155,8 +231,9 @@ export function PortfolioView() {
             <p className="eyebrow">Portfolio</p>
             <h1>Your positions, without the fog.</h1>
             <p className="page-lead">
-              Sign in to see balances, allocation, and 24h movement. The preview account starts with
-              25,000 simulated tUSDC.
+              {demo
+                ? "Sign in to see balances, allocation, and 24h movement. The preview account starts with 25,000 simulated USDC units."
+                : `Sign in to see testnet balances, allocation, and reference-price movement on ${environmentLabel(environment)}.`}
             </p>
           </div>
         </header>
@@ -166,12 +243,13 @@ export function PortfolioView() {
           </span>
           <h2>No active session</h2>
           <p>
-            Continue with the simulated preview account, or prove ownership of a wallet. KYROX never
-            holds keys, and preview balances are off-chain.
+            {demo
+              ? "Continue with the simulated preview account, or prove ownership of a wallet. KYROX never holds keys, and preview balances are off-chain."
+              : `Prove ownership of a wallet on ${environmentLabel(environment)}. KYROX never holds keys, and all assets are testnet-only.`}
           </p>
           <div className="empty-actions">
             <button className="button button-primary" onClick={openAuth}>
-              Open preview account <ArrowRight size={16} />
+              {demo ? "Open preview account" : "Connect wallet"} <ArrowRight size={16} />
             </button>
             <Link className="button button-ghost" href="/markets">
               Browse markets
@@ -183,8 +261,8 @@ export function PortfolioView() {
             <span className="pillar-icon">
               <SparkIcon size={17} />
             </span>
-            <h3>Simulated, clearly labelled</h3>
-            <p>Every balance in this environment is a preview value. No funds exist on-chain.</p>
+            <h3>Environment, clearly labelled</h3>
+            <p>{environmentDisclosure(environment)}</p>
           </article>
           <article className="info-card">
             <span className="pillar-icon">
@@ -209,7 +287,39 @@ export function PortfolioView() {
 
   const stale = portfolio?.stale ?? false;
   const change = portfolio?.change24hUsdc ?? null;
+  const changeValue = toNumber(change);
   const changePct = portfolio?.change24hPct ?? null;
+  const simulatedBalances = portfolio?.simulated ?? environment?.simulated ?? false;
+  const positionValues = (portfolio?.positions ?? []).map((position) =>
+    toNumber(position.valueUsdc),
+  );
+  const equityExposure =
+    positionValues.length === 0
+      ? 0
+      : positionValues.some((value) => value === null)
+        ? null
+        : positionValues.reduce<number>((total, value) => total + (value ?? 0), 0);
+  const pnlValues = (portfolio?.positions ?? []).map((position) =>
+    toNumber(position.unrealizedPnlUsdc),
+  );
+  const basisValues = (portfolio?.positions ?? []).map((position) =>
+    toNumber(position.costBasisUsdc),
+  );
+  const pnlTotal =
+    pnlValues.length > 0 && pnlValues.every((value) => value !== null)
+      ? pnlValues.reduce<number>((total, value) => total + (value ?? 0), 0)
+      : null;
+  const basisTotal =
+    basisValues.length > 0 && basisValues.every((value) => value !== null)
+      ? basisValues.reduce<number>((total, value) => total + (value ?? 0), 0)
+      : null;
+  const pnlPct =
+    pnlTotal === null || basisTotal === null || basisTotal <= 0
+      ? null
+      : (pnlTotal / basisTotal) * 100;
+  const hasAnyCostBasis = (portfolio?.positions ?? []).some(
+    (position) => position.avgCostUsdc !== undefined && position.avgCostUsdc !== null,
+  );
 
   return (
     <div className="page-width page-stack">
@@ -219,13 +329,11 @@ export function PortfolioView() {
           <h1>Your portfolio</h1>
           <p className="page-lead">
             {session.demo ? "Preview account" : "Verified wallet"} {shortAddress(session.address)} ·{" "}
-            {environment?.simulated
-              ? "simulated balances, no on-chain funds"
-              : "Base Sepolia balances"}
+            {balanceQualification(environment)} · {environmentLabel(environment)}
           </p>
         </div>
         <div className="page-head-actions">
-          {session.demo ? (
+          {demo && session.demo && (
             <button
               className="button button-ghost button-small"
               onClick={() => void resetPreview()}
@@ -234,16 +342,8 @@ export function PortfolioView() {
               <RefreshIcon size={15} />
               {localBusy === "reset" ? "Resetting…" : "Reset preview"}
             </button>
-          ) : (
-            <button
-              className="button button-ghost button-small"
-              onClick={() => void claimFaucet()}
-              disabled={localBusy !== ""}
-            >
-              <PlusIcon size={15} />
-              {localBusy === "faucet" ? "Claiming…" : "Claim test tUSDC"}
-            </button>
           )}
+          <ShareCardActions />
           <Link className="button button-primary button-small" href="/markets">
             Trade <ArrowUpRight size={14} />
           </Link>
@@ -251,7 +351,52 @@ export function PortfolioView() {
       </header>
 
       {(error.length > 0 || accountError.length > 0) && (
-        <div className="callout callout-danger">{error || accountError}</div>
+        <div className="callout callout-danger" role="alert" aria-live="assertive">
+          {error || accountError}
+        </div>
+      )}
+      {notice.length > 0 && (
+        <div className="callout callout-safe" role="status" aria-live="polite">
+          {notice}
+          {faucetHash !== null && <span className="mono small"> · {shortAddress(faucetHash)}</span>}
+        </div>
+      )}
+
+      {canClaim && (
+        <section className="panel faucet-panel">
+          <div className="panel-head">
+            <div>
+              <h2>Test faucet</h2>
+              <p className="muted small">
+                Free test settlement tokens, minted directly to your wallet. The contract enforces
+                one welcome grant per wallet and one daily claim per rolling 24 hours.
+              </p>
+            </div>
+            <span className="sim-badge">testnet</span>
+          </div>
+          <div className="info-grid">
+            {FAUCET_CLAIMS.map((claim) => (
+              <article className="info-card" key={claim.kind}>
+                <h3>
+                  {claim.title} · {claim.amountLabel}
+                </h3>
+                <p>{claim.description}</p>
+                <button
+                  type="button"
+                  className="button button-ghost button-small"
+                  onClick={() => void claimFaucet(claim.kind)}
+                  disabled={localBusy !== ""}
+                >
+                  {faucetBusyLabel(claim.kind)}
+                </button>
+              </article>
+            ))}
+          </div>
+          <p className="muted small">
+            No payment is collected for the tokens. On a public testnet your wallet may show a
+            testnet gas estimate; KYROX never holds keys or signs on your behalf.
+          </p>
+        </section>
       )}
 
       <section className="portfolio-hero">
@@ -259,13 +404,14 @@ export function PortfolioView() {
           <span className="eyebrow">Total value</span>
           <div className="portfolio-total">
             <strong>{formatPrice(portfolio?.totalUsdc ?? null)}</strong>
-            <span>tUSDC</span>
+            <span>{settlementDisplayName()}</span>
           </div>
           <div className={`change large ${pctTone(changePct)}`}>
-            {change === null
+            {changeValue === null
               ? "—"
-              : `${change.startsWith("-") ? "" : "+"}${formatPrice(change)} tUSDC`}{" "}
-            ({formatPct(changePct)}) <span className="muted small">24h simulated</span>
+              : `${changeValue > 0 ? "+" : ""}${formatPrice(changeValue)} ${settlementDisplayName()}`}{" "}
+            ({formatPct(changePct)}){" "}
+            <span className="muted small">24h {simulatedBalances ? "simulated" : "reference"}</span>
           </div>
           {stale && (
             <p className="form-error">One or more positions have no fresh reference price.</p>
@@ -273,18 +419,25 @@ export function PortfolioView() {
           <div className="portfolio-split">
             <div>
               <span>Settlement cash</span>
-              <strong>{formatTokenAmount(portfolio?.cash.amount ?? null, 2)} tUSDC</strong>
+              <strong>
+                {formatTokenAmount(portfolio?.cash.amount ?? null, 2)} {settlementDisplayName()}
+              </strong>
             </div>
             <div>
               <span>Equity exposure</span>
               <strong>
-                {formatPrice(
-                  (portfolio?.positions ?? []).reduce(
-                    (total, position) => total + Number(position.valueUsdc ?? 0),
-                    0,
-                  ),
-                )}{" "}
-                tUSDC
+                {equityExposure === null ? "—" : formatPrice(equityExposure)}{" "}
+                {settlementDisplayName()}
+              </strong>
+            </div>
+            <div>
+              <span>
+                {simulatedBalances && hasAnyCostBasis ? "Simulated P&L" : "Average-cost P&L"}
+              </span>
+              <strong className={pctTone(pnlPct)}>
+                {pnlTotal === null
+                  ? "unavailable"
+                  : `${pnlTotal > 0 ? "+" : ""}${formatPrice(pnlTotal)} ${settlementDisplayName()} (${formatPct(pnlPct)})`}
               </strong>
             </div>
             <div>
@@ -296,15 +449,15 @@ export function PortfolioView() {
         <div className="allocation-card">
           <div className="panel-head-inline">
             <span className="eyebrow">Allocation</span>
-            <span className="sim-badge">simulated</span>
+            <span className="sim-badge">{simulatedBalances ? "simulated" : "testnet"}</span>
           </div>
           <Donut slices={[...(portfolio?.allocation ?? [])]} />
           <ul className="allocation-legend">
             {portfolio?.allocation.map((slice) => (
               <li key={slice.symbol}>
                 <span className="legend-dot" style={{ background: slice.accent }} />
-                <span>{slice.symbol}</span>
-                <span className="muted">{slice.sharePct.toFixed(1)}%</span>
+                <span>{assetDisplayName(slice.symbol)}</span>
+                <span className="muted">{formatNumber(slice.sharePct, { min: 1, max: 1 })}%</span>
                 <strong>{formatPrice(slice.valueUsdc)}</strong>
               </li>
             ))}
@@ -316,7 +469,13 @@ export function PortfolioView() {
         <div className="panel-head">
           <div>
             <h2>Positions</h2>
-            <p className="muted small">Reference valuations, not executable bids.</p>
+            <p className="muted small">
+              Reference valuations, not executable bids. Average cost and P&L are{" "}
+              {simulatedBalances && hasAnyCostBasis
+                ? "simulated bookkeeping"
+                : "shown only when a reconciled indexer provides cost basis"}
+              .
+            </p>
           </div>
           <Link className="text-link" href="/markets">
             All markets <ArrowUpRight size={14} />
@@ -330,6 +489,14 @@ export function PortfolioView() {
                 <th className="align-right">Holdings</th>
                 <th className="align-right">Price</th>
                 <th className="align-right">Value</th>
+                <th className="align-right">
+                  Avg cost{" "}
+                  {simulatedBalances && hasAnyCostBasis && <span className="muted small">sim</span>}
+                </th>
+                <th className="align-right">
+                  P&L{" "}
+                  {simulatedBalances && hasAnyCostBasis && <span className="muted small">sim</span>}
+                </th>
                 <th className="align-right">24h</th>
                 <th aria-label="Trade" />
               </tr>
@@ -340,20 +507,42 @@ export function PortfolioView() {
                   <td>
                     <Link className="market-cell" href={`/markets/${position.symbol}`}>
                       <span className="asset-mark small" aria-hidden="true">
-                        {position.symbol.replace("t", "").slice(0, 2)}
+                        {assetDisplayName(position.symbol).slice(0, 1)}
                       </span>
                       <span>
-                        <strong>{position.symbol}</strong>
+                        <strong>{assetDisplayName(position.symbol)}</strong>
                         <small>{position.name}</small>
+                        {position.stale && <span className="status-pill warn">stale</span>}
                       </span>
                     </Link>
                   </td>
                   <td className="align-right mono">{formatTokenAmount(position.amount, 6)}</td>
                   <td className="align-right mono">
-                    {formatPrice(position.priceUsdc)} <span className="muted small">tUSDC</span>
+                    {formatPrice(position.priceUsdc)}{" "}
+                    <span className="muted small">{settlementDisplayName()}</span>
                   </td>
                   <td className="align-right mono">
-                    {formatPrice(position.valueUsdc)} <span className="muted small">tUSDC</span>
+                    {formatPrice(position.valueUsdc)}{" "}
+                    <span className="muted small">{settlementDisplayName()}</span>
+                  </td>
+                  <td className="align-right mono">
+                    {position.avgCostUsdc === null || position.avgCostUsdc === undefined
+                      ? "—"
+                      : `${formatPrice(position.avgCostUsdc)} ${settlementDisplayName()}`}
+                  </td>
+                  <td className={`align-right change ${pctTone(position.unrealizedPnlPct)}`}>
+                    {position.unrealizedPnlUsdc === null ||
+                    position.unrealizedPnlUsdc === undefined ? (
+                      <span className="muted">unavailable</span>
+                    ) : (
+                      <>
+                        <span>
+                          {(toNumber(position.unrealizedPnlUsdc) ?? 0) > 0 ? "+" : ""}
+                          {formatPrice(position.unrealizedPnlUsdc)} {settlementDisplayName()}
+                        </span>
+                        <small className="muted"> {formatPct(position.unrealizedPnlPct)}</small>
+                      </>
+                    )}
                   </td>
                   <td className={`align-right change ${pctTone(position.change24hPct)}`}>
                     {formatPct(position.change24hPct)}
@@ -372,7 +561,7 @@ export function PortfolioView() {
                       $
                     </span>
                     <span>
-                      <strong>tUSDC</strong>
+                      <strong>{settlementDisplayName()}</strong>
                       <small>Test settlement token</small>
                     </span>
                   </span>
@@ -385,18 +574,32 @@ export function PortfolioView() {
                   {formatPrice(portfolio?.cash.valueUsdc ?? null)}
                 </td>
                 <td className="align-right muted">—</td>
+                <td className="align-right muted">—</td>
+                <td className="align-right muted">—</td>
                 <td />
               </tr>
             </tbody>
           </table>
         </div>
+        {!hasAnyCostBasis && (
+          <p className="muted small">
+            Average cost and P&L are unavailable because no durable, reconciled cost-basis indexer
+            is configured. KYROX does not estimate or backfill them.
+          </p>
+        )}
       </section>
 
       <section className="panel">
         <div className="panel-head">
           <div>
             <h2>Recent activity</h2>
-            <p className="muted small">Simulated fills are recorded locally and labelled.</p>
+            <p className="muted small">
+              {demo
+                ? "Simulated fills are recorded off-chain and labelled."
+                : environment?.mode === "local-anvil"
+                  ? "Local transactions use simulated economics and local testnet contracts."
+                  : "Testnet intents are tracked from submission through verification."}
+            </p>
           </div>
           <Link className="text-link" href="/activity">
             Full activity <ArrowUpRight size={14} />
@@ -404,17 +607,24 @@ export function PortfolioView() {
         </div>
         <ActivityList
           items={activity.slice(0, 5)}
+          environment={environment}
           compact
           emptyLabel="No fills yet. Open a market to prepare your first order."
         />
+        {activityStale && (
+          <p className="form-error" role="status">
+            On-chain activity reconciliation is unavailable; persisted statuses may be stale.
+          </p>
+        )}
       </section>
 
       <div className="callout callout-warn">
         <InfoIcon size={16} />
         <p>
-          <strong>Preview accounting.</strong> Values are simulated reference valuations and do not
-          represent an offer, a NAV, or a redeemable balance. No blockchain transaction is created
-          by preview fills.
+          <strong>{demo ? "Preview accounting." : "Testnet accounting."}</strong>{" "}
+          {environmentDisclosure(environment)} Values and any average cost or P&L shown are
+          reference valuations, not an offer, a NAV, or a redeemable real-world balance. Test
+          tokens. No real value. Not real shares. Not investment advice.
         </p>
       </div>
     </div>

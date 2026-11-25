@@ -62,24 +62,56 @@ then revoke it from the old exchange. Revocation is tested.
 
 See `.env.example`. Required for the full path:
 
-| Variable                               | Purpose                                       |
-| -------------------------------------- | --------------------------------------------- |
-| `BASE_MAINNET_RPC_URL`                 | Read-only feed and sequencer reads            |
-| `BASE_SEPOLIA_RPC_URL`                 | Chain-id proof and token `decimals()` reads   |
-| `DATABASE_URL` / `DIRECT_DATABASE_URL` | Observation persistence and migrations        |
-| `PRICE_ALLOWED_TICKERS`                | Assets the worker may ingest                  |
-| `PRICE_MAX_SOURCE_AGE_SECONDS`         | Default freshness bound                       |
-| `PRICE_INGEST_INTERVAL_SECONDS`        | Poll interval                                 |
-| `PRICE_PUBLICATION_ENABLED`            | Must remain `false` until a deployment exists |
-| `KYROX_DEPLOYMENT_MANIFEST`            | Path to the populated manifest                |
-| `KYROX_TEST_DATABASE_URL`              | Disposable database for the integration suite |
+| Variable                         | Purpose                                                       |
+| -------------------------------- | ------------------------------------------------------------- |
+| `BASE_MAINNET_RPC_URL`           | Read-only feed and sequencer reads                            |
+| `BASE_SEPOLIA_RPC_URL`           | Base Sepolia reads and chain identity                         |
+| `BASE_SEPOLIA_RPC_URL_SECONDARY` | Independent archive RPC for deployment verification           |
+| `DATABASE_URL`                   | Pooled application and service connection                     |
+| `DIRECT_DATABASE_URL`            | Non-pooled connection preferred by `pnpm migrate`             |
+| `KYROX_ENVIRONMENT`              | `base-sepolia` for live mode; never infer it from a URL       |
+| `KYROX_DEMO_MODE`                | Keep `1` for public preview; `0` explicitly selects live mode |
+| `KYROX_MARKET_SESSION_MODE`      | `unknown` (fail closed) or explicit `always-open-testnet`     |
+| `AUTH_SECRET`                    | Server-side session/quote secret, at least 32 characters      |
+| `PRICE_ALLOWED_TICKERS`          | Assets the worker may ingest                                  |
+| `PRICE_MAX_SOURCE_AGE_SECONDS`   | Default freshness bound                                       |
+| `PRICE_INGEST_INTERVAL_SECONDS`  | Poll interval                                                 |
+| `PRICE_PUBLICATION_ENABLED`      | Enforced `false` until publication is approved                |
+| `KYROX_DEPLOYMENT_MANIFEST`      | Path to the populated manifest                                |
+| `KYROX_TEST_DATABASE_URL`        | Disposable database for the integration suite                 |
 
-No secret belongs in a `NEXT_PUBLIC_` variable.
+No secret belongs in a `NEXT_PUBLIC_` variable. RPC URLs may contain API keys;
+treat them as secrets and do not paste them into issues or shared logs.
+
+### Production market-session policy
+
+Base Sepolia defaults to `KYROX_MARKET_SESSION_MODE=unknown`. With no exchange
+calendar integrated, quotes and trade intents fail closed with `MARKET_CLOSED`
+rather than fabricating an open session.
+
+`always-open-testnet` is an explicit, testnet-only opt-in. It bypasses the
+calendar check but still enforces the original source timestamp, per-asset
+freshness bound, price band, deviation guard, exchange pause state, and trade
+policy. It does **not** make a feed 24/7, does not refresh stale timestamps, and
+must never be used as a mainnet or “live market hours” claim. Record founder
+approval before enabling it.
+
+### Publication flag
+
+`PRICE_PUBLICATION_ENABLED=false` is the enforced default; blank also defaults to
+false and invalid non-boolean values fail configuration validation. Ingestion
+may persist valid observations, but unsigned `setPrice` preparation remains
+disabled unless the flag is explicitly set to `true` after the manifest, roles,
+database, and publication procedure have been approved. Enabling preparation
+still does not sign or broadcast anything.
 
 ## 6. Database readiness
 
-1. Provision PostgreSQL and set `DATABASE_URL`.
-2. Apply migrations: `pnpm --filter @kyrox/db exec drizzle-kit migrate`.
+1. Provision PostgreSQL and set `DATABASE_URL`; set `DIRECT_DATABASE_URL` to a
+   non-pooled connection for release migrations.
+2. Apply migrations with `pnpm migrate`. The command prefers
+   `DIRECT_DATABASE_URL` and falls back to `DATABASE_URL` only when the direct
+   value is unset or blank. It refuses to run when both are missing.
 3. Verify the unique indexes exist:
    - `price_observations_source_round_unique`
    - `price_publications_asset_round_unique`
@@ -94,17 +126,20 @@ No secret belongs in a `NEXT_PUBLIC_` variable.
 ## 6a. One-shot CLI
 
 ```bash
-BASE_MAINNET_RPC_URL=... \
-DATABASE_URL=... \
-PRICE_ALLOWED_TICKERS=tAAPL,tTSLA,tNVDA \
-PRICE_MAX_SOURCE_AGE_SECONDS=3600 \
+BASE_MAINNET_RPC_URL=<BASE_MAINNET_RPC_URL> \
+DATABASE_URL=<POOLED_DATABASE_URL> \
+PRICE_ALLOWED_TICKERS=tAAPL,tNVDA,tMSFT,tGOOGL,tAMZN,tTSLA,tMETA \
+PRICE_MAX_SOURCE_AGE_SECONDS=600 \
+PRICE_PUBLICATION_ENABLED=false \
 KYROX_DEPLOYMENT_MANIFEST=deployments/base-sepolia.json \
 pnpm price:ingest
 ```
 
 The CLI runs exactly one cycle: config validation, Base Mainnet chain check,
 sequencer gate (3,600 s grace), feed reads, validation, normalization, Drizzle
-persistence, then publication preparation from the latest valid observation.
+persistence, then publication preparation when
+`PRICE_PUBLICATION_ENABLED=true`. With the enforced default `false`, the cycle
+still ingests observations but prepares no publication.
 Exit codes: `0` successful cycle (including zero new rounds or blocked
 publication), `1` per-asset or publication failure, `2` configuration/database
 initialisation failure, `3` sequencer blocked.
@@ -115,20 +150,31 @@ read-only public Base RPC. It applies migrations first and never writes onchain.
 ## 6b. Deployment dry run
 
 ```bash
-BASE_SEPOLIA_RPC_URL=https://sepolia.base.org \
+BASE_SEPOLIA_RPC_URL=<INDEPENDENT_ARCHIVE_RPC_PRIMARY> \
+BASE_SEPOLIA_RPC_URL_SECONDARY=<INDEPENDENT_ARCHIVE_RPC_SECONDARY> \
 SEPOLIA_ADMIN_ADDRESS=0x... \
 SEPOLIA_PRICE_UPDATER_ADDRESS=0x... \
 SEPOLIA_PAUSER_ADDRESS=0x... \
-pnpm deploy:sepolia:dry-run
+SEPOLIA_DEPLOYER_ADDRESS=0x... \
+SEPOLIA_DEVIATION_BPS=tAAPL:500,tNVDA:500,tMSFT:500,tGOOGL:500,tAMZN:500,tTSLA:500,tMETA:500 \
+pnpm deploy:sepolia:dry-run --json
 ```
 
-Read-only. The command rejects any chain other than 84532, derives the order
-(`TestUSDC` → one `TestStock` per asset → `KyroxExchange`), constructor
-arguments and creation-bytecode hashes from compiled artifacts, prints role and
-asset configuration, and writes `deployments/base-sepolia.proposed.json`.
+Read-only. Both providers must be independently operated and archive-capable:
+genesis and checkpoint reads are mandatory, so a chain-id-only or pruned public
+endpoint is not sufficient. The command rejects any chain other than 84532,
+derives the order (`TestUSDC` → one `TestStock` per asset → `KyroxExchange`),
+constructor arguments and creation-bytecode hashes from compiled artifacts,
+prints role and asset configuration, and writes
+`deployments/base-sepolia.proposed.json`.
 That file is a planning artifact: every address is `null`, the environment is
 `base-sepolia-proposal`, it is git-ignored, and it fails the production manifest
 validator. `deployments/base-sepolia.json` is never touched.
+
+**Known logging blocker:** `scripts/deploy-sepolia.ts` prints the full primary
+RPC URL in human output. That source is outside DevOps ownership and was not
+edited. Use `--json` for shared/CI logs and redact provider URLs manually until
+the lead removes or masks the URL in the script.
 
 ## 6c. Deployment evidence, pending record and activation
 
@@ -186,10 +232,25 @@ chain id being 84532 does not make it a Base Sepolia deployment.
 
 ## 8. Emergency pause and recovery
 
+Run every `cast send` against the explicit Base Sepolia RPC and inspect the
+Ledger prompt before approval:
+
+```bash
+cast send <EXCHANGE_ADDRESS> "pause()" \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL" --ledger
+
+cast send <EXCHANGE_ADDRESS> "unpause()" \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL" --ledger
+
+cast send <EXCHANGE_ADDRESS> "resetObservation(address)" <STOCK_ADDRESS> \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL" --ledger
+```
+
 - `PAUSER_ROLE` pauses both `buy` and `sell`; quotes and prepared intents then
   fail closed.
 - A frozen or broken feed stops trading through the freshness check. Freeze an
-  asset explicitly with `setMaxSourceAge(token, 0)`.
+  asset explicitly with `setMaxSourceAge(token, 0)` and include
+  `--rpc-url "$BASE_SEPOLIA_RPC_URL" --ledger` on that command.
 - Recovery from an unusable observation: pause, `resetObservation(token)`,
   publish a fresh round, then unpause.
 - On a corporate action, expect the feed to hold its last value; do not force a
@@ -212,3 +273,8 @@ chain id being 84532 does not make it a Base Sepolia deployment.
   clusters (16.16), not against the eventual production instance.
 - The publication rehearsal uses simulated observations, not Chainlink data.
 - The CLI prepares calldata but has no signing or submission step by design.
+- The deployment dry-run human output exposes the RPC URL; use `--json` until
+  the script is redacted by its owner.
+
+See [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) for the operational go/no-go
+sequence and verified blockers.

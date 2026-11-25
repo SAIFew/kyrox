@@ -138,7 +138,7 @@ export class ChainlinkSequencerUptimeReader implements SequencerUptimeReader {
 
     const answer = round.answer === 0n ? 0 : 1;
     const sourceUpdatedAt = Number(round.updatedAt);
-    const gracePeriodElapsed = nowSeconds - sourceUpdatedAt >= this.#gracePeriodSeconds;
+    const gracePeriodElapsed = nowSeconds - sourceUpdatedAt > this.#gracePeriodSeconds;
 
     // A successful RPC call is not proof of health: the feed must report up AND
     // the recovery window must have elapsed.

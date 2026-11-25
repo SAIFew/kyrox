@@ -2,7 +2,7 @@
 
 **Version:** `0.1.0` (`v0.1` Active Development)
 **Verification Status:**
-- `VERIFIED`: Python 3.11+ / 3.13 environment, `pyproject.toml` packaging (`kyrox-mcp` console entrypoint), `FastMCP("KYROX")` STDIO server, `hello_kyrox`, `get_stock_info`, `list_stocks`, centralized error handling (`tools/errors.py`), redacted JSONL audit logging (`tools/log.py`), standalone transaction safety policy engine (`tools/policy.py`), and STDIO protocol framing (`394+` offline/MCP/mock-provider automated tests passing)
+- `VERIFIED`: Python 3.11+ / 3.13 environment, `pyproject.toml` packaging (`kyrox-mcp` console entrypoint), `FastMCP("KYROX")` STDIO server, `hello_kyrox`, `get_stock_info`, `list_stocks`, centralized error handling (`tools/errors.py`), redacted JSONL audit logging (`tools/log.py`), standalone transaction safety policy engine (`tools/policy.py`), and STDIO protocol framing (`407` offline/MCP/mock-provider automated tests passing)
 - `IN PROGRESS`: `get_wallet_balances`, `get_portfolio`, `prepare_transaction` & `simulate_transaction` — implementation and deterministic mock-provider/MCP tests complete; live on-chain token balance and dry-run demonstrations await manual Base Sepolia `MockStock.sol` deployment via `KYROX_STOCKS_FILE`
 
 **Target Network:** Base Sepolia Testnet (`chainId: 84532` / `0x14a34`) · Labelled Mock Token Fixtures (`mock`)
@@ -34,7 +34,7 @@ KYROX addresses these risks by enforcing a strict **Read $\rightarrow$ Prepare $
 The **Model Context Protocol (MCP)** provides a standardized JSON-RPC 2.0 interface over `stdio` between an AI host application and local tool servers:
 
 - **STDIO Framing (`stdin` / `stdout` / `stderr`):** The AI host spawns the KYROX process (`kyrox-mcp` or `python server.py`) and communicates via newline-delimited JSON-RPC messages on `stdin` and `stdout`. All protocol frames use `stdout` exclusively, while structured audit logs go to `logs/audit.jsonl` (with fallback warnings on `stderr` only), guaranteeing zero `stdout` corruption.
-- **Deterministic Boundary Validation:** Instead of trusting an LLM to format raw RPC payloads or ABI calldata in free text, KYROX validates Pydantic tool schemas, EIP-55 checksummed EVM addresses, Base Sepolia chain ID (`84532`), approved ticker symbols (`tAAPL`, `tTSLA`, `tNVDA`), and `Decimal` quantities inside the Python server before any RPC call is made.
+- **Deterministic Boundary Validation:** Instead of trusting an LLM to format raw RPC payloads or ABI calldata in free text, KYROX validates Pydantic tool schemas, EIP-55 checksummed EVM addresses, Base Sepolia chain ID (`84532`), approved ticker symbols (`tAAPL`, `tNVDA`, `tMSFT`, `tGOOGL`, `tAMZN`, `tTSLA`, `tMETA`), and `Decimal` quantities inside the Python server before any RPC call is made.
 - **Explicit Provenance Envelopes:** Every tool response returns structured metadata—environment label (`mock` vs. `base-sepolia`), valuation basis (`mock_reference_value`), currency, token decimals, policy verdict, and `requires_human_approval: true`—so both the agent and human user see the exact provenance of every number.
 - **Process & Credential Isolation:** The MCP server runs locally with read-only public Base Sepolia RPC configuration, while private keys and seed phrases remain completely outside the server and model context.
 
@@ -47,11 +47,11 @@ The **Model Context Protocol (MCP)** provides a standardized JSON-RPC 2.0 interf
   - `server.py` (`main()` / `FastMCP("KYROX")` over `stdio`, installed as the `kyrox-mcp` console script via `pyproject.toml`)
   - `tools/stocks.py` — Stock dataset loader, schema validator, `KYROX_STOCKS_FILE` override & SHA-256/mtime cache
   - `tools/wallet.py` — Base Sepolia RPC connector, EIP-55 address validator, ERC-20 reader (`get_wallet_balances`) & 100-digit `Decimal` portfolio engine (`get_portfolio`)
-  - `tools/policy.py` — Standalone transaction safety policy gate (`evaluate_transaction_policy`: 50-token max cap, `tAAPL`/`tTSLA`/`tNVDA` allowlist, `requires_human_approval: true`)
+  - `tools/policy.py` — Standalone transaction safety policy gate (`evaluate_transaction_policy`: 50-token max cap, `tAAPL`/`tNVDA`/`tMSFT`/`tGOOGL`/`tAMZN`/`tTSLA`/`tMETA` allowlist, `requires_human_approval: true`)
   - `tools/tx.py` — Unsigned ERC-20 `transfer(address,uint256)` intent builder (`prepare_transaction`), SHA-256 `intent_hash` verifier & pinned-block EVM simulator (`simulate_transaction`)
   - `tools/log.py` — Thread-safe, rotating, secret-redacting JSONL audit logger (`@audit_tool_call`, fail-closed on transaction tools)
   - `tools/errors.py` — Centralized `ErrorCode` taxonomy, `KyroxError` hierarchy & recursive secret redaction
-  - `data/stocks.json` — Packaged mock stock catalogue (`tAAPL`, `tTSLA`, `tNVDA` with `token_address: ""` in version control)
+  - `data/stocks.json` — Packaged mock stock catalogue (`tAAPL`, `tNVDA`, `tMSFT`, `tGOOGL`, `tAMZN`, `tTSLA`, `tMETA` with `token_address: ""` in version control)
   - `contracts/MockStock.sol` — Solidity `^0.8.20` OpenZeppelin ERC-20 mock stock contract (18 decimals, mints `1,000` test tokens to deployer)
 
 ```text
@@ -164,7 +164,7 @@ Copy [.env.example](.env.example) to `.env` if you want to customize runtime set
 | `KYROX_STOCKS_FILE` | Optional | `data/stocks.json` | Path to a custom JSON stock dataset (used to supply deployed Base Sepolia `MockStock.sol` contract addresses locally without modifying packaged `data/stocks.json`). |
 | `KYROX_MAX_TOKEN_AMOUNT` | Optional | `50` | Maximum allowed token quantity per transaction (`0 < limit <= 50`). Can tighten the limit below `50`, but values `> 50` are rejected with `INVALID_CONFIGURATION`. |
 | `KYROX_MAX_TX_AMOUNT` | Optional | `50` | Alias for `KYROX_MAX_TOKEN_AMOUNT` (`0 < limit <= 50`). If both variables are set, they must not conflict. |
-| `KYROX_APPROVED_TICKERS` | Optional | `tAAPL,tTSLA,tNVDA` | Comma-separated active ticker subset. Must be a non-empty subset of the canonical allowlist (`tAAPL`, `tTSLA`, `tNVDA`); unknown tickers cannot be added via environment configuration. |
+| `KYROX_APPROVED_TICKERS` | Optional | tAAPL,tNVDA,tMSFT,tGOOGL,tAMZN,tTSLA,tMETA | Comma-separated active ticker subset. Must be a non-empty subset of the canonical allowlist (`tAAPL`, `tNVDA`, `tMSFT`, `tGOOGL`, `tAMZN`, `tTSLA`, `tMETA`); unknown tickers cannot be added via environment configuration. |
 | `KYROX_ALLOWED_RECIPIENTS` | Optional | *(unset — any valid non-zero, non-contract EVM address)* | Optional comma-separated allowlist of recipient wallet addresses on Base Sepolia. Every entry is validated as a non-zero EIP-55 address. |
 | `KYROX_INTENT_TTL_SECONDS` | Optional | `300` | Expiration window in seconds (`1` to `86400`) for unsigned transaction intents produced by `prepare_transaction`. |
 | `KYROX_LOG_DIR` | Optional | `logs` | Directory where structured, redacted JSONL audit logs are written. |
@@ -291,7 +291,7 @@ KYROX registers **7 MCP tools** in [server.py](server.py). Every tool carries `T
 | 3 | `get_stock_info` | `ticker: str` | Catalogue (Offline) | `VERIFIED` | Case-insensitive lookup returning the full stock record (`ticker`, `stock`, `reference_value`, `token_address`) or an `{"error": ...}` dictionary. |
 | 4 | `get_wallet_balances` | `wallet: str` | Base Sepolia Read | `IN PROGRESS` | Validate a public EIP-55 wallet address, verify Base Sepolia (`chainId: 84532`), read ERC-20 `balanceOf(wallet)` and `decimals()` on configured token contracts, and return non-zero balances. |
 | 5 | `get_portfolio` | `wallet: str` | Base Sepolia Read & Valuation | `IN PROGRESS` | Combine Base Sepolia ERC-20 balances with qualified mock reference values using 100-digit `Decimal` arithmetic, enforce single-currency aggregation, track `unpriced_holdings`, and return `holdings`, `total_value`, and explicit `warnings`. |
-| 6 | `prepare_transaction` | `from_wallet: str`, `ticker: str`, `to: str`, `amount: int \| float \| str` | Policy Gate & Unsigned Intent | `IN PROGRESS` | Enforce the pre-RPC safety policy (`<= 50` tokens, `tAAPL`/`tTSLA`/`tNVDA` allowlist, `requires_human_approval: true`), verify Base Sepolia (`chainId: 84532`) and contract `decimals()`, and build an **unsigned** ERC-20 `transfer(to, amount_base_units)` intent (`signed: false`, `broadcast: false`, `intent_hash`, `expires_at`). |
+| 6 | `prepare_transaction` | `from_wallet: str`, `ticker: str`, `to: str`, `amount: int \| float \| str` | Policy Gate & Unsigned Intent | `IN PROGRESS` | Enforce the pre-RPC safety policy (`<= 50` tokens, `tAAPL`/`tNVDA`/`tMSFT`/`tGOOGL`/`tAMZN`/`tTSLA`/`tMETA` allowlist, `requires_human_approval: true`), verify Base Sepolia (`chainId: 84532`) and contract `decimals()`, and build an **unsigned** ERC-20 `transfer(to, amount_base_units)` intent (`signed: false`, `broadcast: false`, `intent_hash`, `expires_at`). |
 | 7 | `simulate_transaction` | `from_wallet: str`, `ticker: str`, `to: str`, `amount: int \| float \| str` | Policy Gate & EVM Dry-Run | `IN PROGRESS` | Independently enforce the pre-RPC safety policy, prepare and verify the unsigned intent, pin a single canonical Base Sepolia block number (`eth_blockNumber`), execute `eth_call` (decoding the 32-byte ERC-20 `bool` return value) and `eth_estimateGas` (in gas units), and return `would_succeed`, `estimated_gas`, `signed: false`, and `broadcast: false`. |
 
 ---
@@ -514,7 +514,7 @@ Please read [SECURITY.md](SECURITY.md) before using or contributing to KYROX. Co
 
 - **No Private Keys or Seed Phrases:** KYROX never asks for, accepts, stores, logs, or transmits private keys, seed phrases, recovery codes, or API secrets.
 - **No Signing or Broadcasting:** KYROX contains zero `sign_transaction`, `send_transaction`, or `send_raw_transaction` code paths (enforced via AST inspection tests in `tests/test_tx.py`). Every transaction response returns `signed: false` and `broadcast: false`.
-- **50-Token Maximum & Strict 3-Ticker Allowlist (`tools/policy.py`):** Transaction tools enforce a default `50`-token per-transaction cap (`amount <= 50` inclusive; configurable downward via `KYROX_MAX_TOKEN_AMOUNT` / `KYROX_MAX_TX_AMOUNT`, never above `50`) and restrict transfers strictly to `tAAPL`, `tTSLA`, and `tNVDA`.
+- **50-Token Maximum & Strict Seven-Ticker Allowlist (`tools/policy.py`):** Transaction tools enforce a default `50`-token per-transaction cap (`amount <= 50` inclusive; configurable downward via `KYROX_MAX_TOKEN_AMOUNT` / `KYROX_MAX_TX_AMOUNT`, never above `50`) and restrict transfers strictly to `tAAPL`, `tNVDA`, `tMSFT`, `tGOOGL`, `tAMZN`, `tTSLA`, `tMETA`.
 - **Policy Verdict $\neq$ Human Approval:** Passing a policy check or `eth_call` dry run only means the parameters passed automated pre-checks at a single block height; every decision retains `requires_human_approval: true`.
 - **Fail-Closed Redacted Audit Logging (`tools/log.py`):** Every tool call and policy decision is scrubbed by `redact_sensitive_data()` and logged to `logs/audit.jsonl`. If audit logging fails on an allowed transaction operation, KYROX fails closed and rejects the operation.
 - **Exact Financial Arithmetic:** Token quantities and portfolio valuations use integer base units and 100-digit Python `Decimal` arithmetic—never binary floating-point conversion.
@@ -565,7 +565,7 @@ All tests isolate audit logs into temporary `pytest` directories (`tests/conftes
 | `MISSING_CONFIGURATION`: `"token contract address for tAAPL is not configured in the stock dataset"` | Packaged `data/stocks.json` has `token_address: ""` by default | Expected when no Base Sepolia mock token contracts are configured. To test with deployed `MockStock.sol` contracts on Base Sepolia, create a local JSON copy with checksummed `token_address` values and set `KYROX_STOCKS_FILE=/absolute/path/to/stocks.local.json`. |
 | `get_wallet_balances` returns `"balances": []` or `get_portfolio` warns `"No deployed token contract addresses are configured"` | Packaged `data/stocks.json` has blank `token_address` fields (or wallet holds `0` tokens) | Supply deployed Base Sepolia mock token addresses via `KYROX_STOCKS_FILE` and query a wallet that holds those test tokens. |
 | `UNSUPPORTED_CHAIN_ID` | `BASE_RPC_URL` points to Base Mainnet (`8453`), Ethereum Mainnet (`1`), or another chain | Set `BASE_RPC_URL=https://sepolia.base.org` (or another Base Sepolia RPC endpoint returning `chainId: 84532`). |
-| `POLICY_REJECTED`: `"Transaction amount ... exceeds maximum allowed limit (50)"` | Requested `amount > 50` (or above `KYROX_MAX_TOKEN_AMOUNT`) | Keep per-transaction token amounts `<= 50` and use an approved ticker (`tAAPL`, `tTSLA`, `tNVDA`). |
+| `POLICY_REJECTED`: `"Transaction amount ... exceeds maximum allowed limit (50)"` | Requested `amount > 50` (or above `KYROX_MAX_TOKEN_AMOUNT`) | Keep per-transaction token amounts `<= 50` and use an approved ticker (`tAAPL`, `tNVDA`, `tMSFT`, `tGOOGL`, `tAMZN`, `tTSLA`, `tMETA`). |
 | `INVALID_WALLET_ADDRESS` or `ZERO_ADDRESS_NOT_ALLOWED` | Malformed hex address, corrupted mixed-case EIP-55 checksum, or `0x0000...0000` | Provide a valid 42-character EIP-55 checksummed (or all-lowercase hex) public wallet address. |
 | Tools do not appear in Claude Desktop or Antigravity after editing config | Host did not reload MCP configuration or paths in JSON are relative/invalid | Verify that `"command"` and `"args"` use valid absolute paths (with escaped `\\` on Windows), run `python -m json.tool` on the config file to check JSON syntax, and fully restart the host application. |
 
@@ -611,7 +611,7 @@ See [BOUNTY.md](BOUNTY.md) for the complete reward rules, qualification criteria
 ### Base Sepolia Testnet-Only Warning & Asset Distinction
 
 > **Critical Distinction — Mock Stock Tokens vs. USDC Contribution Rewards:**
-> 1. **Testnet Mock Stock Tokens (`tAAPL`, `tTSLA`, `tNVDA`):** Exist solely on **Base Sepolia testnet (`chainId: 84532`)** via [contracts/MockStock.sol](contracts/MockStock.sol) for functional testing of KYROX MCP tools. They have **zero monetary value**, do not represent real equities, and are currently awaiting manual owner deployment (`token_address: ""` in packaged [data/stocks.json](data/stocks.json)).
+> 1. **Testnet Mock Stock Tokens (`tAAPL`, `tNVDA`, `tMSFT`, `tGOOGL`, `tAMZN`, `tTSLA`, `tMETA`):** Exist solely on **Base Sepolia testnet (`chainId: 84532`)** via [contracts/MockStock.sol](contracts/MockStock.sol) for functional testing of KYROX MCP tools. They have **zero monetary value**, do not represent real equities, and are currently awaiting manual owner deployment (`token_address: ""` in packaged [data/stocks.json](data/stocks.json)).
 > 2. **USDC Contribution Rewards ([BOUNTY.md](BOUNTY.md)):** Are separate off-protocol contribution incentives subject to independent maintainer verification, owner confirmation of reward funding and payout network (the original playbook suggests a `$400 USDC` pool across Chapter 1 and early Chapter 2 without confirming escrow or payout network), and appropriate tax and legal review prior to distribution.
 
 ---

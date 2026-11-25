@@ -56,6 +56,21 @@ describe("price observation validation", () => {
     }
   });
 
+  it("rejects unknown provenance, zero feeds, and invalid source chains", () => {
+    expect(() =>
+      assertPriceObservation({ ...observation, sourceKind: "unknown" as never }, NOW),
+    ).toThrow(CoreError);
+    expect(() =>
+      assertPriceObservation(
+        { ...observation, feedAddress: "0x0000000000000000000000000000000000000000" },
+        NOW,
+      ),
+    ).toThrow(CoreError);
+    expect(() => assertPriceObservation({ ...observation, sourceChainId: 0 }, NOW)).toThrow(
+      CoreError,
+    );
+  });
+
   it("requires a feed address for chainlink observations", () => {
     expect(() => assertPriceObservation({ ...observation, feedAddress: null }, NOW)).toThrow(
       CoreError,
@@ -98,6 +113,10 @@ describe("freshness", () => {
     expect(() =>
       assessFreshness(observation, { ...config, maxSourceAgeSeconds: 0 }, NOW, "open"),
     ).toThrow(CoreError);
+    expect(() =>
+      assessFreshness(observation, { ...config, maxSourceAgeSeconds: 1.5 }, NOW, "open"),
+    ).toThrow(CoreError);
+    expect(() => assessFreshness(observation, config, NOW, "paused" as never)).toThrow(CoreError);
   });
 
   it("refuses freshness config for a different asset", () => {

@@ -3,9 +3,10 @@ import {
   assertLocalManifest,
   isLoopbackUrl,
   loadDeploymentManifest,
-  parseDeploymentManifest,
   type DeploymentManifest,
 } from "@kyrox/protocol";
+
+import { canonicalAppOrigin } from "./origin.js";
 
 export interface RuntimeEnvironment {
   readonly mode: "local-anvil" | "base-sepolia";
@@ -13,6 +14,7 @@ export interface RuntimeEnvironment {
   readonly rpcUrl: string;
   readonly databaseUrl: string;
   readonly quoteSecret: string;
+  readonly appOrigin: string;
   readonly manifest: DeploymentManifest;
 }
 
@@ -41,6 +43,7 @@ export function loadEnvironment(): RuntimeEnvironment {
   if (quoteSecret.length < 32) {
     throw new EnvironmentError("AUTH_SECRET must contain at least 32 characters.");
   }
+  const appOrigin = canonicalAppOrigin(process.env["APP_ORIGIN"], rawMode);
 
   if (rawMode === "local-anvil") {
     const manifestPath =
@@ -51,7 +54,15 @@ export function loadEnvironment(): RuntimeEnvironment {
     }
     const manifest = loadDeploymentManifest(manifestPath);
     assertLocalManifest(manifest);
-    return { mode: "local-anvil", manifestPath, rpcUrl, databaseUrl, quoteSecret, manifest };
+    return {
+      mode: "local-anvil",
+      manifestPath,
+      rpcUrl,
+      databaseUrl,
+      quoteSecret,
+      appOrigin,
+      manifest,
+    };
   }
 
   const manifestPath =
@@ -63,7 +74,15 @@ export function loadEnvironment(): RuntimeEnvironment {
       "Production mode requires an approved base-sepolia manifest with status deployed.",
     );
   }
-  return { mode: "base-sepolia", manifestPath, rpcUrl, databaseUrl, quoteSecret, manifest };
+  return {
+    mode: "base-sepolia",
+    manifestPath,
+    rpcUrl,
+    databaseUrl,
+    quoteSecret,
+    appOrigin,
+    manifest,
+  };
 }
 
 export function exchangeAddress(env: RuntimeEnvironment): Address {
@@ -85,5 +104,5 @@ export function assetAddress(env: RuntimeEnvironment, symbol: string): Address {
 }
 
 export function loadManifestText(path: string): DeploymentManifest {
-  return parseDeploymentManifest(JSON.parse(path));
+  return loadDeploymentManifest(path);
 }

@@ -1,5 +1,8 @@
+import { assetDisplayName, settlementDisplayName } from "./presentation";
+
 export function toNumber(value: string | number | null | undefined): number | null {
   if (value === null || value === undefined) return null;
+  if (typeof value === "string" && value.trim().length === 0) return null;
   const parsed = typeof value === "number" ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -50,8 +53,25 @@ export function formatPct(value: number | null | undefined): string {
 }
 
 export function pctTone(value: number | null | undefined): "up" | "down" | "flat" {
-  if (value === null || value === undefined || value === 0) return "flat";
+  if (value === null || value === undefined || !Number.isFinite(value) || value === 0)
+    return "flat";
   return value > 0 ? "up" : "down";
+}
+
+export function pctDirectionLabel(value: number | null | undefined): string {
+  const tone = pctTone(value);
+  if (tone === "flat") {
+    return value === 0 ? "unchanged" : "unavailable";
+  }
+  return tone;
+}
+
+export function formatDurationSeconds(value: number | null | undefined): string | null {
+  const seconds = toNumber(value);
+  if (seconds === null || seconds <= 0) return null;
+  return `${seconds.toLocaleString("en-US", { maximumFractionDigits: 2 })} ${
+    seconds === 1 ? "second" : "seconds"
+  }`;
 }
 
 export function shortAddress(address: string | null | undefined): string {
@@ -65,7 +85,7 @@ export function timeAgo(secondsOrIso: number | string | null | undefined): strin
     typeof secondsOrIso === "number"
       ? secondsOrIso * (secondsOrIso > 10_000_000_000 ? 1 : 1_000)
       : Date.parse(secondsOrIso);
-  if (!Number.isFinite(timestamp)) return "—";
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return "—";
   const diff = Math.max(0, Date.now() - timestamp);
   const seconds = Math.floor(diff / 1_000);
   if (seconds < 10) return "just now";
@@ -76,9 +96,9 @@ export function timeAgo(secondsOrIso: number | string | null | undefined): strin
 }
 
 export function formatDate(iso: string | null | undefined): string {
-  if (iso === null || iso === undefined) return "—";
+  if (iso === null || iso === undefined || iso.trim().length === 0) return "—";
   const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "—";
+  if (Number.isNaN(date.getTime()) || date.getTime() <= 0) return "—";
   return date.toLocaleString("en-US", {
     month: "short",
     day: "2-digit",
@@ -88,12 +108,21 @@ export function formatDate(iso: string | null | undefined): string {
 }
 
 export function formatTime(seconds: number | null | undefined): string {
-  if (seconds === null || seconds === undefined) return "—";
-  return new Date(seconds * 1_000).toLocaleTimeString("en-US", {
+  const timestamp = toNumber(seconds);
+  if (timestamp === null || timestamp <= 0) return "—";
+  return new Date(timestamp * 1_000).toLocaleTimeString("en-US", {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
   });
+}
+
+export function formatUtc(seconds: number | null | undefined): string {
+  const timestamp = toNumber(seconds);
+  if (timestamp === null || timestamp <= 0) return "—";
+  const date = new Date(timestamp * 1_000);
+  if (Number.isNaN(date.getTime())) return "—";
+  return `${date.toISOString().replace("T", " ").slice(0, 16)} UTC`;
 }
 
 export function rangeLabel(range: string): string {
@@ -114,16 +143,19 @@ export function rangeLabel(range: string): string {
 export function activityAmountLabel(item: {
   side: "buy" | "sell";
   amountIn: string;
-  amountOut: string | null;
+  amountOut: string | null | undefined;
   symbol: string;
 }): string {
   const decimalsIn = item.side === "buy" ? 6 : 18;
   const decimalsOut = item.side === "buy" ? 18 : 6;
-  const input = Number(item.amountIn) / 10 ** decimalsIn;
-  const output = item.amountOut === null ? null : Number(item.amountOut) / 10 ** decimalsOut;
+  const rawInput = toNumber(item.amountIn);
+  const rawOutput = toNumber(item.amountOut);
+  const input = rawInput === null ? null : rawInput / 10 ** decimalsIn;
+  const output = rawOutput === null ? null : rawOutput / 10 ** decimalsOut;
+  if (input === null) return "Amount unavailable";
   if (output === null)
-    return `${formatTokenAmount(input, 4)} ${item.side === "buy" ? "tUSDC" : item.symbol}`;
+    return `${formatTokenAmount(input, 4)} ${item.side === "buy" ? settlementDisplayName() : assetDisplayName(item.symbol)}`;
   return item.side === "buy"
-    ? `${formatTokenAmount(input, 2)} tUSDC → ${formatTokenAmount(output, 4)} ${item.symbol}`
-    : `${formatTokenAmount(input, 4)} ${item.symbol} → ${formatTokenAmount(output, 2)} tUSDC`;
+    ? `${formatTokenAmount(input, 2)} ${settlementDisplayName()} → ${formatTokenAmount(output, 4)} ${assetDisplayName(item.symbol)}`
+    : `${formatTokenAmount(input, 4)} ${assetDisplayName(item.symbol)} → ${formatTokenAmount(output, 2)} ${settlementDisplayName()}`;
 }

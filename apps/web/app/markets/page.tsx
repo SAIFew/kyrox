@@ -1,13 +1,19 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import {
+  MarketsEnvironmentMeta,
+  MarketsEnvironmentNotice,
+} from "../../components/environment-labels";
 import { MarketsExplorer } from "../../components/live-markets";
+import { MarketHoursBadge } from "../../components/market-hours-badge";
+import { settlementDisplayName } from "../../lib/presentation";
 import { ArrowUpRight, InfoIcon, LayersIcon, ShieldIcon } from "../../components/icons";
 
 export const metadata: Metadata = {
   title: "Markets",
   description:
-    "Explore KYROX reference markets: tokenized-equity instruments with transparent simulated reference prices, freshness, and policy-constrained quotes.",
+    "Explore KYROX reference markets: tokenized-equity testnet instruments with transparent reference prices, explicit simulation labels, freshness, and policy-constrained quotes.",
 };
 
 export default function MarketsPage() {
@@ -21,20 +27,12 @@ export default function MarketsPage() {
             Each instrument trades against a published reference price. Limits, freshness, and
             simulation status are visible before any order is prepared.
           </p>
+          <MarketHoursBadge />
         </div>
-        <div className="page-head-meta">
-          <span className="sim-badge">simulated feed</span>
-          <span className="muted small">Chain ID 84532 · Base Sepolia</span>
-        </div>
+        <MarketsEnvironmentMeta />
       </header>
 
-      <div className="notice-strip">
-        <InfoIcon size={15} />
-        <span>
-          Public preview: prices are deterministic simulations and the exchange is not deployed.
-          Quotes and fills happen in a clearly labelled simulated venue.
-        </span>
-      </div>
+      <MarketsEnvironmentNotice />
 
       <MarketsExplorer />
 
@@ -55,8 +53,8 @@ export default function MarketsPage() {
           </span>
           <h3>Bounded by policy</h3>
           <p>
-            1 tUSDC minimum, 1,000 tUSDC maximum per order, 5,000 tUSDC daily notional, and an
-            explicit asset allowlist.
+            1 test {settlementDisplayName()} minimum, 1,000 {settlementDisplayName()} maximum per
+            order, 5,000 {settlementDisplayName()} daily notional, and an explicit asset allowlist.
           </p>
         </article>
         <article className="info-card">
@@ -77,7 +75,7 @@ export default function MarketsPage() {
           <span>Open any market, choose a side, and walk through the review flow.</span>
         </div>
         <Link className="button button-primary" href="/markets/tAAPL">
-          Open tAAPL <ArrowUpRight size={15} />
+          Open Test Apple <ArrowUpRight size={15} />
         </Link>
       </div>
     </div>

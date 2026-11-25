@@ -74,7 +74,7 @@ const observation: OnChainObservation = {
   simulated: true,
 };
 
-function priceSetLog(publishedAt = NOW) {
+function priceSetLog(publishedAt = NOW, round = 1n, price = 230_000_000n) {
   const topics = encodeEventTopics({
     abi: PRICE_SET_EVENT_ABI,
     eventName: "PriceSet",
@@ -89,7 +89,7 @@ function priceSetLog(publishedAt = NOW) {
       { type: "bool" },
       { type: "uint256" },
     ],
-    [230_000_000n, 1n, BigInt(NOW - 5), 8_453n, true, BigInt(publishedAt)],
+    [price, round, BigInt(NOW - 5), 8_453n, true, BigInt(publishedAt)],
   );
   return { address: EXCHANGE, topics, data };
 }
@@ -185,6 +185,144 @@ describe("publication verification", () => {
     const second = await verifyPublication({ ...params, store: db, rpc: rpc() });
     expect(first.state).toBe("verified");
     expect(second.state).toBe("verified");
+    expect((await db.getPublication("tAAPL", 1n))?.status).toBe("verified");
+  });
+
+  it("keeps a matched historical publication verified when a newer round is canonical", async () => {
+    const db = await store();
+    const report = await verifyPublication({
+      ...params,
+      store: db,
+      rpc: rpc({
+        readObservation: async () => ({
+          ...observation,
+          priceUsdcPerWholeToken: 240_000_000n,
+          sourceRoundId: 2n,
+          sourceUpdatedAt: NOW - 1,
+        }),
+      }),
+    });
+    expect(report.state).toBe("verified");
+    expect(report.historicalEvidence).toBe(true);
+    expect(report.failures).toEqual([]);
+    expect(report.checks.join(" ")).toContain("newer canonical observation");
+  });
+
+  it("reports transient RPC failure without mutating the publication", async () => {
+    const db = await store();
+    const report = await verifyPublication({
+      ...params,
+      store: db,
+      rpc: rpc({
+        readObservation: async () => {
+          throw new Error("temporary RPC outage");
+        },
+      }),
+    });
+    expect(report.state).toBe("unavailable");
+    expect(report.retryable).toBe(true);
+    expect(report.historicalEvidence).toBe(true);
+    expect((await db.getPublication("tAAPL", 1n))?.status).toBe("prepared");
+  });
+
+  it("keeps a reorged record pending while canonical re-inclusion is unavailable", async () => {
+    const db = await store();
+    await db.updatePublication({
+      assetSymbol: "tAAPL",
+      sourceRoundId: 1n,
+      status: "verified",
+      transactionHash: TX_HASH,
+      blockHash: `0x${"cc".repeat(32)}` as Hex,
+    });
+    await db.updatePublication({
+      assetSymbol: "tAAPL",
+      sourceRoundId: 1n,
+      status: "reorged",
+      failureReason: "old block reorged",
+    });
+    const report = await verifyPublication({
+      ...params,
+      store: db,
+      rpc: rpc({ getTransactionReceipt: async () => null }),
+    });
+    expect(report.state).toBe("pending");
+    expect(report.retryable).toBe(true);
+    expect((await db.getPublication("tAAPL", 1n))?.status).toBe("reorged");
+  });
+
+  it("recovers a reorged publication after canonical re-inclusion", async () => {
+    const db = await store();
+    await db.updatePublication({
+      assetSymbol: "tAAPL",
+      sourceRoundId: 1n,
+      status: "verified",
+      transactionHash: TX_HASH,
+      blockHash: `0x${"cc".repeat(32)}` as Hex,
+    });
+    await db.updatePublication({
+      assetSymbol: "tAAPL",
+      sourceRoundId: 1n,
+      status: "reorged",
+      failureReason: "old block reorged",
+    });
+    const newHash = `0x${"dd".repeat(32)}` as Hex;
+    const report = await verifyPublication({
+      ...params,
+      store: db,
+      rpc: rpc({
+        getTransactionReceipt: async () => ({
+          status: "success",
+          to: EXCHANGE,
+          blockNumber: 100n,
+          blockHash: newHash,
+          logs: [priceSetLog()],
+        }),
+        getBlock: async () => ({ timestamp: NOW, hash: newHash }),
+        readObservation: async () => ({ ...observation, sourceRoundId: 2n }),
+      }),
+    });
+    expect(report.state).toBe("verified");
+    expect(report.canonicalReincluded).toBe(true);
+    expect((await db.getPublication("tAAPL", 1n))?.status).toBe("verified");
+  });
+
+  it("rejects a malformed current observation without rewriting history", async () => {
+    const db = await store();
+    const report = await verifyPublication({
+      ...params,
+      store: db,
+      rpc: rpc({ readObservation: async () => ({ ...observation, sourceRoundId: 0n }) }),
+    });
+    expect(report.state).toBe("mismatch");
+    expect(report.historicalEvidence).toBe(true);
+  });
+
+  it("recovers verified confidence after canonical confirmation depth is restored", async () => {
+    const db = await store();
+    await db.updatePublication({
+      assetSymbol: "tAAPL",
+      sourceRoundId: 1n,
+      status: "verified",
+      transactionHash: TX_HASH,
+      blockHash: BLOCK_HASH,
+      confirmations: 6,
+    });
+    const shallow = await verifyPublication({
+      ...params,
+      store: db,
+      rpc: rpc({ getBlockNumber: async () => 102n }),
+      minConfirmations: 4,
+    });
+    expect(shallow.state).toBe("reorged");
+
+    const restored = await verifyPublication({
+      ...params,
+      store: db,
+      rpc: rpc({ getBlockNumber: async () => 105n }),
+      minConfirmations: 4,
+    });
+    expect(restored.state).toBe("verified");
+    expect(restored.canonicalReincluded).toBe(true);
     expect((await db.getPublication("tAAPL", 1n))?.status).toBe("verified");
   });
 
@@ -307,7 +445,7 @@ describe("publication verification", () => {
     expect(report.failures.join(" ")).toContain("token");
   });
 
-  it("detects a reorg and never downgrades a verified record", async () => {
+  it("records a reorg and recovers when the same transaction is canonically re-included", async () => {
     const db = await store();
     await db.updatePublication({
       assetSymbol: "tAAPL",
@@ -319,9 +457,84 @@ describe("publication verification", () => {
     });
 
     const report = await verifyPublication({ ...params, store: db, rpc: rpc() });
-    expect(report.state).toBe("reorged");
-    expect((await db.getPublication("tAAPL", 1n))?.status).toBe("reorged");
+    expect(report.state).toBe("verified");
+    expect(report.canonicalReincluded).toBe(true);
+    expect((await db.getPublication("tAAPL", 1n))?.status).toBe("verified");
     expect((await db.getPublication("tAAPL", 1n))?.reorgDetected).toBe(true);
+    expect((await db.publicationTransitions("tAAPL", 1n)).map((entry) => entry.toStatus)).toEqual([
+      "verified",
+      "reorged",
+      "verified",
+    ]);
+  });
+
+  it("keeps a re-included publication reorged until its new block reaches confirmations", async () => {
+    const db = await store();
+    await db.updatePublication({
+      assetSymbol: "tAAPL",
+      sourceRoundId: 1n,
+      status: "verified",
+      transactionHash: TX_HASH,
+      blockHash: `0x${"cc".repeat(32)}` as Hex,
+      confirmations: 3,
+    });
+    const pending = await verifyPublication({
+      ...params,
+      store: db,
+      rpc: rpc({ getBlockNumber: async () => 101n }),
+    });
+    expect(pending.state).toBe("included");
+    expect(pending.canonicalReincluded).toBe(true);
+    expect((await db.getPublication("tAAPL", 1n))?.status).toBe("reorged");
+
+    const recovered = await verifyPublication({ ...params, store: db, rpc: rpc() });
+    expect(recovered.state).toBe("verified");
+    expect(recovered.canonicalReincluded).toBe(true);
+  });
+
+  it("marks a historically included publication reorged when the canonical round regresses", async () => {
+    const db = await store();
+    const roundTwoData = encodeSetPrice(EXCHANGE, {
+      stockToken: TOKEN,
+      priceUsdcPerWholeToken: 230_000_000n,
+      sourceRoundId: 2n,
+      sourceUpdatedAt: NOW - 5,
+      sourceChainId: 8_453,
+      feedAddress: ZERO,
+      simulated: true,
+    });
+    await db.recordPublication({
+      ...publication,
+      sourceRoundId: 2n,
+      calldataHash: keccak256(roundTwoData.data),
+    });
+    await db.updatePublication({
+      assetSymbol: "tAAPL",
+      sourceRoundId: 2n,
+      status: "included",
+      transactionHash: TX_HASH,
+      blockNumber: "100",
+      blockHash: BLOCK_HASH,
+      confirmations: 6,
+    });
+    const report = await verifyPublication({
+      ...params,
+      sourceRoundId: 2n,
+      store: db,
+      rpc: rpc({
+        getTransaction: async () => ({ to: EXCHANGE, input: roundTwoData.data }),
+        getTransactionReceipt: async () => ({
+          status: "success",
+          to: EXCHANGE,
+          blockNumber: 100n,
+          blockHash: BLOCK_HASH,
+          logs: [priceSetLog(NOW, 2n)],
+        }),
+      }),
+    });
+    expect(report.state).toBe("reorged");
+    expect(report.historicalEvidence).toBe(true);
+    expect((await db.getPublication("tAAPL", 2n))?.status).toBe("reorged");
   });
 
   it("rejects a local-anvil manifest in production mode", async () => {
@@ -390,6 +603,7 @@ describe("publication verification", () => {
     expect(verifyExitCode("verified")).toBe(0);
     expect(verifyExitCode("included")).toBe(4);
     expect(verifyExitCode("pending")).toBe(3);
+    expect(verifyExitCode("unavailable")).toBe(5);
     expect(verifyExitCode("mismatch")).toBe(1);
   });
 });

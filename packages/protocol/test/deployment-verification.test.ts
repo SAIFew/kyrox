@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { encodeAbiParameters, keccak256, type Abi, type Hex } from "viem";
+import { encodeAbiParameters, keccak256, toHex, type Abi, type Address, type Hex } from "viem";
 
 import {
   BASE_SEPOLIA_CHECKPOINT_BLOCK,
@@ -18,6 +18,7 @@ import {
   type DeploymentVerifierRpc,
   type PendingDeploymentRecord,
 } from "../src/index.js";
+import { parseDeploymentConfirmations } from "../../../scripts/verify-sepolia-deployment.js";
 
 const ADMIN = "0x1111111111111111111111111111111111111111" as const;
 const UPDATER = "0x2222222222222222222222222222222222222222" as const;
@@ -30,6 +31,69 @@ const OTHER = "0x8888888888888888888888888888888888888888" as const;
 const PROPOSAL_HASH = `0x${"12".repeat(32)}` as Hex;
 const DEPLOYER = "0x5555555555555555555555555555555555555555" as const;
 const BLOCK_HASH = `0x${"bb".repeat(32)}` as Hex;
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
+const ZERO32 = `0x${"00".repeat(32)}` as Hex;
+const FAUCET_TX = `0x${"04".repeat(32)}` as Hex;
+const ROLE_GRANTED_TOPIC = keccak256(toHex("RoleGranted(bytes32,address,address)"));
+const ROLE_REVOKED_TOPIC = keccak256(toHex("RoleRevoked(bytes32,address,address)"));
+const TRANSFER_TOPIC = keccak256(toHex("Transfer(address,address,uint256)"));
+
+function addressTopic(address: Address): Hex {
+  return `0x${"00".repeat(12)}${address.slice(2)}` as Hex;
+}
+
+function roleLog(
+  address: Address,
+  role: Hex,
+  account: Address,
+  options: {
+    revoked?: boolean;
+    logIndex?: number;
+    blockNumber?: bigint;
+  } = {},
+) {
+  return {
+    address,
+    topics: [
+      options.revoked === true ? ROLE_REVOKED_TOPIC : ROLE_GRANTED_TOPIC,
+      role,
+      addressTopic(account),
+      addressTopic(DEPLOYER),
+    ],
+    data: "0x" as Hex,
+    blockNumber: options.blockNumber ?? 100n,
+    logIndex: options.logIndex ?? 0,
+    transactionHash: FAUCET_TX,
+    blockHash: BLOCK_HASH,
+    removed: false,
+  };
+}
+
+function transferLog(
+  address: Address,
+  from: Address,
+  to: Address,
+  value: bigint,
+  transactionHash: Hex = FAUCET_TX,
+) {
+  return {
+    address,
+    topics: [TRANSFER_TOPIC, addressTopic(from), addressTopic(to)],
+    data: encodeAbiParameters([{ type: "uint256" }], [value]),
+    blockNumber: 101n,
+    logIndex: 1,
+    transactionHash,
+    blockHash: BLOCK_HASH,
+    removed: false,
+  };
+}
+
+function expectedRoleLogs(
+  address: Address,
+  accounts: readonly Address[],
+): ReturnType<typeof roleLog>[] {
+  return accounts.map((account, index) => roleLog(address, ZERO32, account, { logIndex: index }));
+}
 
 const baseArtifact = (bytecode: Hex, deployed: Hex): DeploymentArtifact => ({
   abi: [
@@ -154,6 +218,24 @@ function deploymentRpc(overrides: Partial<DeploymentVerifierRpc> = {}): Deployme
     [USDC.toLowerCase()]: "tUSDC",
     [STOCK.toLowerCase()]: "tAAPL",
   };
+  const exchangeRole = keccak256(toHex("KYROX_EXCHANGE_ROLE"));
+  const updaterRole = keccak256(toHex("KYROX_PRICE_UPDATER_ROLE"));
+  const pauserRole = keccak256(toHex("KYROX_PAUSER_ROLE"));
+  const logsByAddress: Record<string, ReturnType<typeof roleLog>[]> = {
+    [USDC.toLowerCase()]: [
+      ...expectedRoleLogs(USDC, [ADMIN]),
+      roleLog(USDC, exchangeRole, EXCHANGE, { logIndex: 1 }),
+    ],
+    [STOCK.toLowerCase()]: [
+      ...expectedRoleLogs(STOCK, [ADMIN]),
+      roleLog(STOCK, exchangeRole, EXCHANGE, { logIndex: 1 }),
+    ],
+    [EXCHANGE.toLowerCase()]: [
+      ...expectedRoleLogs(EXCHANGE, [ADMIN]),
+      roleLog(EXCHANGE, updaterRole, UPDATER, { logIndex: 1 }),
+      roleLog(EXCHANGE, pauserRole, PAUSER, { logIndex: 2 }),
+    ],
+  };
   return {
     getChainId: async () => 84_532,
     getTransactionReceipt: async (txHash) => {
@@ -204,6 +286,7 @@ function deploymentRpc(overrides: Partial<DeploymentVerifierRpc> = {}): Deployme
       if (address === USDC) return artifacts["TestUSDC"]?.deployedBytecode as Hex;
       return artifacts["KyroxExchange"]?.deployedBytecode as Hex;
     },
+    getLogs: async ({ address }) => logsByAddress[address.toLowerCase()] ?? [],
     readDecimals: async (address) => (address === USDC ? 6 : 18),
     readName: async (address) => addresses[address.toLowerCase()] ?? "unknown",
     readSymbol: async (address) => symbols[address.toLowerCase()] ?? "unknown",
@@ -223,6 +306,10 @@ function deploymentRpc(overrides: Partial<DeploymentVerifierRpc> = {}): Deployme
   };
 }
 
+function matchingRpcs(overrides: Partial<DeploymentVerifierRpc> = {}) {
+  return { rpc: deploymentRpc(overrides), secondaryRpc: deploymentRpc(overrides) };
+}
+
 const chainIdentity = {
   chainId: 84_532 as const,
   genesisHash: BASE_SEPOLIA_GENESIS_HASH,
@@ -236,6 +323,7 @@ const params = {
   proposal,
   artifacts,
   rpc: deploymentRpc(),
+  secondaryRpc: deploymentRpc(),
   expectedProposalHash: PROPOSAL_HASH,
   chainIdentity,
   minConfirmations: 1,
@@ -258,7 +346,7 @@ describe("deployment evidence verification", () => {
   it("rejects missing bytecode and zero addresses", async () => {
     const noCode = await verifyDeployment({
       ...params,
-      rpc: deploymentRpc({ getCode: async () => "0x" }),
+      ...matchingRpcs({ getCode: async () => "0x" }),
     });
     expect(noCode.ok).toBe(false);
     expect(noCode.failures.join(" ")).toContain("no bytecode");
@@ -282,7 +370,7 @@ describe("deployment evidence verification", () => {
   it("rejects runtime bytecode that differs outside immutables", async () => {
     const report = await verifyDeployment({
       ...params,
-      rpc: deploymentRpc({ getCode: async () => `0x${"aa".repeat(39)}ef` as Hex }),
+      ...matchingRpcs({ getCode: async () => `0x${"aa".repeat(39)}ef` as Hex }),
     });
     expect(report.ok).toBe(false);
     expect(report.failures.join(" ")).toContain("runtime bytecode");
@@ -291,7 +379,7 @@ describe("deployment evidence verification", () => {
   it("rejects incorrect constructor evidence", async () => {
     const report = await verifyDeployment({
       ...params,
-      rpc: deploymentRpc({
+      ...matchingRpcs({
         getTransaction: async (txHash) =>
           txHash === evidence.contracts["TestUSDC"]?.transactionHash
             ? {
@@ -308,7 +396,7 @@ describe("deployment evidence verification", () => {
   it("rejects creation code that differs while runtime stays correct", async () => {
     const report = await verifyDeployment({
       ...params,
-      rpc: deploymentRpc({
+      ...matchingRpcs({
         getTransaction: async (txHash) =>
           txHash === evidence.contracts["TestUSDC"]?.transactionHash
             ? {
@@ -324,10 +412,10 @@ describe("deployment evidence verification", () => {
     expect(report.failures.join(" ")).toContain("creation bytecode");
   });
 
-  it("rejects an unauthorized deployer and preminted supply", async () => {
+  it("rejects an unauthorized deployer and historically preminted supply", async () => {
     const wrongDeployer = await verifyDeployment({
       ...params,
-      rpc: deploymentRpc({
+      ...matchingRpcs({
         getTransaction: async (txHash) =>
           txHash === evidence.contracts["TestUSDC"]?.transactionHash
             ? {
@@ -340,12 +428,48 @@ describe("deployment evidence verification", () => {
     expect(wrongDeployer.ok).toBe(false);
     expect(wrongDeployer.failures.join(" ")).toContain("approved deployer");
 
+    const base = deploymentRpc();
     const preminted = await verifyDeployment({
       ...params,
-      rpc: deploymentRpc({ readTotalSupply: async () => 1_000_000n }),
+      ...matchingRpcs({
+        getLogs: async (request) => {
+          const logs = await base.getLogs(request);
+          return request.address === USDC
+            ? [
+                ...logs,
+                transferLog(
+                  USDC,
+                  ZERO_ADDRESS,
+                  ADMIN,
+                  1_000_000n,
+                  evidence.contracts["TestUSDC"]!.transactionHash,
+                ),
+              ]
+            : logs;
+        },
+        readTotalSupply: async (address) => (address === USDC ? 1_000_000n : 0n),
+      }),
     });
     expect(preminted.ok).toBe(false);
-    expect(preminted.failures.join(" ")).toContain("initial supply");
+    expect(preminted.failures.join(" ")).toContain("constructor minted");
+  });
+
+  it("accepts non-zero current supply only when historical transfers reconcile", async () => {
+    const base = deploymentRpc();
+    const report = await verifyDeployment({
+      ...params,
+      ...matchingRpcs({
+        getLogs: async (request) => {
+          const logs = await base.getLogs(request);
+          return request.address === USDC
+            ? [...logs, transferLog(USDC, ZERO_ADDRESS, OTHER, 1_000_000n)]
+            : logs;
+        },
+        readTotalSupply: async (address) => (address === USDC ? 1_000_000n : 0n),
+      }),
+    });
+    expect(report.ok).toBe(true);
+    expect(report.checks.join(" ")).toContain("historical supply reconciliation");
   });
 
   it("rejects insufficient deployment confirmations and a non-canonical block", async () => {
@@ -355,7 +479,7 @@ describe("deployment evidence verification", () => {
 
     const reorgedBlock = await verifyDeployment({
       ...params,
-      rpc: deploymentRpc({
+      ...matchingRpcs({
         getBlock: async () => ({ hash: `0x${"dd".repeat(32)}`, timestamp: 1_795_000_000 }),
       }),
     });
@@ -366,7 +490,7 @@ describe("deployment evidence verification", () => {
   it("rejects missing roles and wrong token metadata", async () => {
     const report = await verifyDeployment({
       ...params,
-      rpc: deploymentRpc({
+      ...matchingRpcs({
         hasRole: async (contract, role) => !(contract === USDC && role === "EXCHANGE_ROLE"),
         readDecimals: async (address) => (address === USDC ? 8 : 18),
       }),
@@ -379,7 +503,7 @@ describe("deployment evidence verification", () => {
   it("rejects the wrong settlement token and asset configuration", async () => {
     const report = await verifyDeployment({
       ...params,
-      rpc: deploymentRpc({
+      ...matchingRpcs({
         readUsdc: async () => OTHER,
         readAssetSettings: async () => ({
           listed: false,
@@ -396,6 +520,79 @@ describe("deployment evidence verification", () => {
     expect(report.failures.join(" ")).toContain("not listed");
     expect(report.failures.join(" ")).toContain("freshness");
     expect(report.failures.join(" ")).toContain("deviation");
+  });
+  it("rejects non-positive, fractional and non-finite confirmation thresholds", async () => {
+    for (const minConfirmations of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await expect(verifyDeployment({ ...params, minConfirmations })).rejects.toThrow(
+        /positive integer/,
+      );
+    }
+  });
+
+  it("requires independent RPC agreement on receipts, bytecode and mutable state", async () => {
+    const receiptMismatch = await verifyDeployment({
+      ...params,
+      secondaryRpc: deploymentRpc({
+        getTransactionReceipt: async (txHash) => {
+          const receipt = await deploymentRpc().getTransactionReceipt(txHash);
+          return receipt === null ? null : { ...receipt, blockHash: `0x${"ee".repeat(32)}` };
+        },
+      }),
+    });
+    expect(receiptMismatch.ok).toBe(false);
+    expect(receiptMismatch.failures.join(" ")).toContain(
+      "deployment receipt: independent RPCs disagree",
+    );
+
+    const codeMismatch = await verifyDeployment({
+      ...params,
+      secondaryRpc: deploymentRpc({ getCode: async () => "0x1234" }),
+    });
+    expect(codeMismatch.ok).toBe(false);
+    expect(codeMismatch.failures.join(" ")).toContain(
+      "runtime bytecode: independent RPCs disagree",
+    );
+
+    const stateMismatch = await verifyDeployment({
+      ...params,
+      secondaryRpc: deploymentRpc({ readPaused: async () => true }),
+    });
+    expect(stateMismatch.ok).toBe(false);
+    expect(stateMismatch.failures.join(" ")).toContain("pause state: independent RPCs disagree");
+  });
+
+  it("detects unexpected EXCHANGE_ROLE grants even when later revoked", async () => {
+    const base = deploymentRpc();
+    const exchangeRole = keccak256(toHex("KYROX_EXCHANGE_ROLE"));
+    const report = await verifyDeployment({
+      ...params,
+      ...matchingRpcs({
+        getLogs: async (request) => {
+          const logs = await base.getLogs(request);
+          return request.address === STOCK
+            ? [
+                ...logs,
+                roleLog(STOCK, exchangeRole, OTHER, { logIndex: 3 }),
+                roleLog(STOCK, exchangeRole, OTHER, { logIndex: 4, revoked: true }),
+              ]
+            : logs;
+        },
+      }),
+    });
+    expect(report.ok).toBe(false);
+    expect(report.failures.join(" ")).toContain("unexpected");
+    expect(report.failures.join(" ")).toContain("EXCHANGE_ROLE");
+  });
+});
+
+describe("activation confirmation configuration", () => {
+  it("accepts only positive safe integer environment values", () => {
+    expect(parseDeploymentConfirmations(undefined)).toBe(12);
+    expect(parseDeploymentConfirmations("1")).toBe(1);
+    expect(parseDeploymentConfirmations(" 12 ")).toBe(12);
+    for (const raw of ["", " ", "0", "-1", "1.5", "NaN", "Infinity", "12x", "9007199254740992"]) {
+      expect(() => parseDeploymentConfirmations(raw)).toThrow(/positive safe integer/);
+    }
   });
 });
 
@@ -428,6 +625,7 @@ describe("pending deployment recording and activation", () => {
   it("records a deterministic pending record and produces a valid manifest", async () => {
     const record = await verified();
     expect(record.status).toBe("verified_pending_activation");
+    expect(record.integrityHash).toMatch(/^0x[0-9a-fA-F]{64}$/);
     expect(record.contracts["TestUSDC"]?.address).toBe(USDC);
     expect(record.assets["tAAPL"]?.stockToken).toBe(STOCK);
 
@@ -447,6 +645,33 @@ describe("pending deployment recording and activation", () => {
       ManifestActivationError,
     );
     expect(() => parseDeploymentManifest({ ...record, contracts: {} })).toThrow();
+  });
+
+  it("rejects mutated pending evidence before promotion", async () => {
+    const record = await verified();
+    const mutated = {
+      ...record,
+      contracts: {
+        ...record.contracts,
+        TestUSDC: {
+          ...record.contracts["TestUSDC"]!,
+          runtimeBytecodeHash: `0x${"99".repeat(32)}` as Hex,
+        },
+      },
+    };
+    expect(() => validatePendingRecord(mutated)).toThrow(/integrity hash/);
+    const memory = io();
+    expect(() =>
+      promotePendingManifest({
+        record: mutated,
+        expectedProposalHash: PROPOSAL_HASH,
+        targetPath: "live.json",
+        confirmed: true,
+        io: memory.io,
+        now: new Date(),
+      }),
+    ).toThrow(/integrity hash/);
+    expect(memory.files.size).toBe(0);
   });
 
   it("requires explicit confirmation and protects an existing live manifest", async () => {

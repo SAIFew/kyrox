@@ -1,4 +1,4 @@
-import { assertAssetDefinition, type AssetDefinition } from "./assets.js";
+import { assertAssetDefinition, isSupportedStockDecimals, type AssetDefinition } from "./assets.js";
 import { CoreError } from "./errors.js";
 import {
   assessFreshness,
@@ -17,7 +17,11 @@ export type TradeSide = "buy" | "sell";
 /** The protocol rounds every output down, so the venue never over-pays a user. */
 export const ROUNDING_DIRECTION = "down" as const;
 
-export const DEFAULT_QUOTE_TTL_SECONDS = 60;
+/**
+ * Quotes are short-lived by design. Thirty seconds keeps the reference price
+ * close to execution time and matches the testnet MVP validity window.
+ */
+export const DEFAULT_QUOTE_TTL_SECONDS = 30;
 export const MAX_SLIPPAGE_BPS = 1_000;
 export const MAX_UINT256 = 2n ** 256n - 1n;
 
@@ -48,7 +52,24 @@ export interface Quote {
   readonly sourceUpdatedAt: number;
   readonly expiresAt: number;
   readonly sourceKind: PriceObservation["sourceKind"];
+  readonly sourceChainId: number;
+  readonly feedAddress: PriceObservation["feedAddress"];
   readonly freshness: FreshnessAssessment;
+}
+
+export function assertTradeSide(value: unknown): asserts value is TradeSide {
+  if (value !== "buy" && value !== "sell") {
+    throw new CoreError("INVALID_SIDE", `Trade side must be buy or sell, got ${String(value)}.`);
+  }
+}
+
+function assertStockDecimals(value: number): asserts value is AssetDefinition["stockDecimals"] {
+  if (!isSupportedStockDecimals(value)) {
+    throw new CoreError(
+      "INVALID_DECIMALS",
+      `Stock decimals must be one of 6, 8 or 18, got ${String(value)}.`,
+    );
+  }
 }
 
 export function assertPositiveAmount(value: bigint, label: string): bigint {
@@ -65,6 +86,9 @@ export function assertPositiveAmount(value: bigint, label: string): bigint {
 }
 
 function assertPositivePrice(price: bigint): bigint {
+  if (typeof price !== "bigint") {
+    throw new CoreError("INVALID_PRICE", `Price must be a bigint, got ${typeof price}.`);
+  }
   if (price <= 0n) {
     throw new CoreError("INVALID_PRICE", "Price must be greater than zero.");
   }
@@ -104,6 +128,7 @@ export function calculateBuyStockOut(
 ): bigint {
   assertPositiveAmount(usdcIn, "usdcIn");
   assertPositivePrice(priceUsdcPerWholeToken);
+  assertStockDecimals(stockDecimals);
   const scale = 10n ** BigInt(stockDecimals);
   return assertUint256((usdcIn * scale) / priceUsdcPerWholeToken, "stockOut");
 }
@@ -120,6 +145,7 @@ export function calculateSellUsdcOut(
 ): bigint {
   assertPositiveAmount(stockIn, "stockIn");
   assertPositivePrice(priceUsdcPerWholeToken);
+  assertStockDecimals(stockDecimals);
   const scale = 10n ** BigInt(stockDecimals);
   return assertUint256((stockIn * priceUsdcPerWholeToken) / scale, "usdcOut");
 }
@@ -154,6 +180,7 @@ export function createQuote(
   options: CreateQuoteOptions,
 ): Quote {
   assertAssetDefinition(asset);
+  assertTradeSide(request.side);
 
   if (asset.symbol !== request.assetSymbol) {
     throw new CoreError("QUOTE_MISMATCH", "Asset definition does not match the quote request.");
@@ -237,11 +264,14 @@ export function createQuote(
     sourceUpdatedAt: observation.sourceUpdatedAt,
     expiresAt: options.nowSeconds + ttl,
     sourceKind: observation.sourceKind,
+    sourceChainId: observation.sourceChainId,
+    feedAddress: observation.feedAddress,
     freshness,
   };
 }
 
 /** USDC notional a quote is judged on: spend for a buy, proceeds for a sell. */
 export function quoteNotionalUsdc(quote: Quote): bigint {
+  assertTradeSide(quote.side);
   return quote.side === "buy" ? quote.amountIn : quote.amountOut;
 }

@@ -1,0 +1,23 @@
+[Script Info]
+Title: KYROX product demonstration captions
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
+Style: Caption,Avenir Next Demi Bold,29,&H00F8FAFC,&H00F8FAFC,&HAA0A101D,&HAA0A101D,-1,0,0,0,100,100,0,0,1,1.2,0.8,2,120,120,62,1
+
+[Events]
+Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
+Dialogue: 0,0:00:00.000,0:00:06.000,Caption,,0,0,0,,Introducing KYROX
+Dialogue: 0,0:00:06.000,0:00:14.000,Caption,,0,0,0,,Explore tokenized assets
+Dialogue: 0,0:00:14.000,0:00:20.000,Caption,,0,0,0,,Detailed asset insights
+Dialogue: 0,0:00:20.000,0:00:27.000,Caption,,0,0,0,,Secure, non-custodial access
+Dialogue: 0,0:00:27.000,0:00:33.500,Caption,,0,0,0,,Your portfolio, in one place
+Dialogue: 0,0:00:33.500,0:00:47.800,Caption,,0,0,0,,Review. Understand. Execute.
+Dialogue: 0,0:00:47.800,0:00:51.500,Caption,,0,0,0,,Track every activity
+Dialogue: 0,0:00:51.500,0:01:01.500,Caption,,0,0,0,,Built for AI-agent integration
+Dialogue: 0,0:01:01.500,0:01:09.000,Caption,,0,0,0,,KYROX \NPublic preview · simulated trading
+

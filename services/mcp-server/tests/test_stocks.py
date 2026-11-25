@@ -37,12 +37,36 @@ def _run_sync_coroutine(coro: Coroutine[Any, Any, T]) -> T:
 
 def test_load_stocks_returns_all_expected_mock_records() -> None:
     records = load_stocks()
-    assert len(records) == 3
+    assert len(records) == 7
     assert records == [
         {
             "ticker": "tAAPL",
             "stock": "Test Apple",
             "reference_value": 230.0,
+            "token_address": "",
+        },
+        {
+            "ticker": "tNVDA",
+            "stock": "Test NVIDIA",
+            "reference_value": 140.0,
+            "token_address": "",
+        },
+        {
+            "ticker": "tMSFT",
+            "stock": "Test Microsoft",
+            "reference_value": 415.0,
+            "token_address": "",
+        },
+        {
+            "ticker": "tGOOGL",
+            "stock": "Test Google",
+            "reference_value": 180.0,
+            "token_address": "",
+        },
+        {
+            "ticker": "tAMZN",
+            "stock": "Test Amazon",
+            "reference_value": 200.0,
             "token_address": "",
         },
         {
@@ -52,9 +76,9 @@ def test_load_stocks_returns_all_expected_mock_records() -> None:
             "token_address": "",
         },
         {
-            "ticker": "tNVDA",
-            "stock": "Test Nvidia",
-            "reference_value": 140.0,
+            "ticker": "tMETA",
+            "stock": "Test Meta",
+            "reference_value": 520.0,
             "token_address": "",
         },
     ]
@@ -67,7 +91,7 @@ def test_load_stocks_is_independent_of_current_working_directory(
     try:
         os.chdir(tmp_path)
         records = load_stocks()
-        assert len(records) == 3
+        assert len(records) == 7
         assert records[0]["ticker"] == "tAAPL"
     finally:
         os.chdir(original_cwd)
@@ -86,6 +110,42 @@ def test_load_stocks_is_independent_of_current_working_directory(
             },
         ),
         (
+            "tNVDA",
+            {
+                "ticker": "tNVDA",
+                "stock": "Test NVIDIA",
+                "reference_value": 140.0,
+                "token_address": "",
+            },
+        ),
+        (
+            "tMSFT",
+            {
+                "ticker": "tMSFT",
+                "stock": "Test Microsoft",
+                "reference_value": 415.0,
+                "token_address": "",
+            },
+        ),
+        (
+            "tGOOGL",
+            {
+                "ticker": "tGOOGL",
+                "stock": "Test Google",
+                "reference_value": 180.0,
+                "token_address": "",
+            },
+        ),
+        (
+            "tAMZN",
+            {
+                "ticker": "tAMZN",
+                "stock": "Test Amazon",
+                "reference_value": 200.0,
+                "token_address": "",
+            },
+        ),
+        (
             "tTSLA",
             {
                 "ticker": "tTSLA",
@@ -95,11 +155,11 @@ def test_load_stocks_is_independent_of_current_working_directory(
             },
         ),
         (
-            "tNVDA",
+            "tMETA",
             {
-                "ticker": "tNVDA",
-                "stock": "Test Nvidia",
-                "reference_value": 140.0,
+                "ticker": "tMETA",
+                "stock": "Test Meta",
+                "reference_value": 520.0,
                 "token_address": "",
             },
         ),
@@ -147,16 +207,40 @@ def test_get_stock_info_valid_tickers() -> None:
         "reference_value": 230.0,
         "token_address": "",
     }
+    assert server.get_stock_info("tNVDA") == {
+        "ticker": "tNVDA",
+        "stock": "Test NVIDIA",
+        "reference_value": 140.0,
+        "token_address": "",
+    }
+    assert server.get_stock_info("tMSFT") == {
+        "ticker": "tMSFT",
+        "stock": "Test Microsoft",
+        "reference_value": 415.0,
+        "token_address": "",
+    }
+    assert server.get_stock_info("tGOOGL") == {
+        "ticker": "tGOOGL",
+        "stock": "Test Google",
+        "reference_value": 180.0,
+        "token_address": "",
+    }
+    assert server.get_stock_info("tAMZN") == {
+        "ticker": "tAMZN",
+        "stock": "Test Amazon",
+        "reference_value": 200.0,
+        "token_address": "",
+    }
     assert server.get_stock_info("tTSLA") == {
         "ticker": "tTSLA",
         "stock": "Test Tesla",
         "reference_value": 250.0,
         "token_address": "",
     }
-    assert server.get_stock_info("tNVDA") == {
-        "ticker": "tNVDA",
-        "stock": "Test Nvidia",
-        "reference_value": 140.0,
+    assert server.get_stock_info("tMETA") == {
+        "ticker": "tMETA",
+        "stock": "Test Meta",
+        "reference_value": 520.0,
         "token_address": "",
     }
     assert server.get_stock_info("taapl") == {
@@ -182,7 +266,7 @@ def test_list_stocks_returns_all_configured_records_with_exact_fields() -> None:
     result = server.list_stocks()
 
     assert isinstance(result, list)
-    assert len(result) == len(raw_records) == 3
+    assert len(result) == len(raw_records) == 7
 
     for summary, original in zip(result, raw_records, strict=True):
         assert set(summary.keys()) == {"ticker", "name", "reference_value"}
@@ -192,8 +276,12 @@ def test_list_stocks_returns_all_configured_records_with_exact_fields() -> None:
 
     assert result == [
         {"ticker": "tAAPL", "name": "Test Apple", "reference_value": 230.0},
+        {"ticker": "tNVDA", "name": "Test NVIDIA", "reference_value": 140.0},
+        {"ticker": "tMSFT", "name": "Test Microsoft", "reference_value": 415.0},
+        {"ticker": "tGOOGL", "name": "Test Google", "reference_value": 180.0},
+        {"ticker": "tAMZN", "name": "Test Amazon", "reference_value": 200.0},
         {"ticker": "tTSLA", "name": "Test Tesla", "reference_value": 250.0},
-        {"ticker": "tNVDA", "name": "Test Nvidia", "reference_value": 140.0},
+        {"ticker": "tMETA", "name": "Test Meta", "reference_value": 520.0},
     ]
 
 
@@ -253,8 +341,12 @@ def test_fastmcp_tool_discovery_and_invocation() -> None:
     )
     expected_list = [
         {"ticker": "tAAPL", "name": "Test Apple", "reference_value": 230.0},
+        {"ticker": "tNVDA", "name": "Test NVIDIA", "reference_value": 140.0},
+        {"ticker": "tMSFT", "name": "Test Microsoft", "reference_value": 415.0},
+        {"ticker": "tGOOGL", "name": "Test Google", "reference_value": 180.0},
+        {"ticker": "tAMZN", "name": "Test Amazon", "reference_value": 200.0},
         {"ticker": "tTSLA", "name": "Test Tesla", "reference_value": 250.0},
-        {"ticker": "tNVDA", "name": "Test Nvidia", "reference_value": 140.0},
+        {"ticker": "tMETA", "name": "Test Meta", "reference_value": 520.0},
     ]
     assert structured_list == {"result": expected_list}
     assert [json.loads(block.text) for block in content_list] == expected_list
@@ -291,12 +383,25 @@ def test_fastmcp_tool_discovery_and_invocation() -> None:
     )
     expected_nvda = {
         "ticker": "tNVDA",
-        "stock": "Test Nvidia",
+        "stock": "Test NVIDIA",
         "reference_value": 140.0,
         "token_address": "",
     }
     assert structured_nvda == expected_nvda
     assert json.loads(content_nvda[0].text) == expected_nvda
+
+    # Test 3b: tMSFT (newly added seven-asset catalogue entry)
+    content_msft, structured_msft = _run_sync_coroutine(
+        server.mcp.call_tool("get_stock_info", {"ticker": "tMSFT"})
+    )
+    expected_msft = {
+        "ticker": "tMSFT",
+        "stock": "Test Microsoft",
+        "reference_value": 415.0,
+        "token_address": "",
+    }
+    assert structured_msft == expected_msft
+    assert json.loads(content_msft[0].text) == expected_msft
 
     # Test 4: Case-insensitive taapl
     content_lower, structured_lower = _run_sync_coroutine(

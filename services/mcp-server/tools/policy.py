@@ -5,9 +5,10 @@ construction or EVM simulation RPC call takes place:
 1. Maximum transaction amount: ``50`` tokens by default (inclusive boundary ``<= 50``;
    configurable via ``KYROX_MAX_TOKEN_AMOUNT`` or ``KYROX_MAX_TX_AMOUNT`` up to the
    Day 11 hard ceiling of ``50`` tokens).
-2. Approved ticker allowlist: strictly ``tAAPL``, ``tTSLA``, and ``tNVDA`` (optional
-   subset restriction via ``KYROX_APPROVED_TICKERS``; arbitrary dataset entries or
-   environment settings cannot expand the allowlist beyond these three tickers).
+2. Approved ticker allowlist: strictly ``tAAPL``, ``tNVDA``, ``tMSFT``,
+   ``tGOOGL``, ``tAMZN``, ``tTSLA``, and ``tMETA`` (optional subset restriction
+   via ``KYROX_APPROVED_TICKERS``; arbitrary dataset entries or environment
+   settings cannot expand the allowlist beyond these seven tickers).
 3. Positive, finite ``Decimal`` token amounts and token-decimal precision bounds.
 4. Mandatory human approval (``requires_human_approval = True`` on every decision).
 5. Base Sepolia chain ID enforcement (``84532``; Base Mainnet ``8453`` and all other
@@ -54,7 +55,15 @@ from tools.wallet import (
 
 POLICY_VERSION: str = "v0.1-day11"
 HARD_MAX_TOKEN_AMOUNT: Decimal = DEFAULT_MAX_TOKEN_AMOUNT  # 50 tokens
-CANONICAL_APPROVED_TICKERS: tuple[str, ...] = ("tAAPL", "tTSLA", "tNVDA")
+CANONICAL_APPROVED_TICKERS: tuple[str, ...] = (
+    "tAAPL",
+    "tNVDA",
+    "tMSFT",
+    "tGOOGL",
+    "tAMZN",
+    "tTSLA",
+    "tMETA",
+)
 CANONICAL_TICKER_MAP: dict[str, str] = {
     ticker.lower(): ticker for ticker in CANONICAL_APPROVED_TICKERS
 }
@@ -170,10 +179,11 @@ get_max_token_amount = get_max_tx_amount
 def get_approved_tickers() -> frozenset[str]:
     """Resolve the active lowercase approved ticker allowlist.
 
-    Defaults to the canonical Day 11 allowlist (``{"taapl", "ttsla", "tnvda"}``).
+    Defaults to the canonical allowlist
+    (``{"taapl", "tnvda", "tmsft", "tgoogl", "tamzn", "ttsla", "tmeta"}``).
     When ``KYROX_APPROVED_TICKERS`` is set, validates that it is non-empty and a
-    subset of the canonical Day 11 tickers so configuration cannot expand the
-    intended allowlist.
+    subset of the canonical tickers so configuration cannot expand the intended
+    allowlist.
     """
     raw_tickers = os.getenv(APPROVED_TICKERS_ENV_VAR, "").strip()
     if not raw_tickers:
@@ -203,7 +213,7 @@ def get_approved_tickers() -> frozenset[str]:
 
 
 def get_approved_tickers_canonical() -> tuple[str, ...]:
-    """Return the active approved tickers in canonical case order (``tAAPL``, ``tTSLA``, ``tNVDA``)."""
+    """Return the active approved tickers in canonical case order."""
     approved_lower = get_approved_tickers()
     return tuple(
         ticker
@@ -520,7 +530,8 @@ def evaluate_transaction_policy(
     Enforces:
     - Mandatory human approval (rejects any attempt by an agent to bypass ``requires_human_approval``
       or claim pre-granted autonomous execution approval).
-    - Approved tickers (``tAAPL``, ``tTSLA``, ``tNVDA``).
+    - Approved tickers (``tAAPL``, ``tNVDA``, ``tMSFT``, ``tGOOGL``, ``tAMZN``,
+      ``tTSLA``, ``tMETA``).
     - Positive, finite ``Decimal`` amount and token decimal precision bounds.
     - Maximum transaction amount (``50`` tokens default, inclusive boundary).
     - Optional sender, recipient, token contract, recipient allowlist, and Base Sepolia

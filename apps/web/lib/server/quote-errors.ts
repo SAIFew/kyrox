@@ -30,6 +30,10 @@ export function mapQuoteError(err: unknown): MappedQuoteError {
         return { status: 400, code: "quote_ttl_too_long", message: err.message };
       case "POLICY_SOURCE_INVALID":
         return { status: 503, code: "policy_unavailable", message: err.message };
+      case "TRADING_PAUSED":
+        return { status: 423, code: "trading_paused", message: err.message };
+      case "ACCOUNT_BANNED":
+        return { status: 403, code: "account_banned", message: err.message };
     }
   }
   return {

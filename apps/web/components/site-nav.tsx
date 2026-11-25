@@ -5,17 +5,30 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { useAccount, ConnectButton } from "./account-provider";
-import { ActivityIcon, ChartIcon, CodeIcon, GridIcon, CloseIcon, InfoIcon } from "./icons";
+import { environmentShortLabel } from "../lib/presentation";
+import {
+  ActivityIcon,
+  ChartIcon,
+  CodeIcon,
+  GridIcon,
+  LayersIcon,
+  SparkIcon,
+  CloseIcon,
+  InfoIcon,
+} from "./icons";
 import { Logo } from "./logo";
 
 const PRIMARY = [
   { href: "/markets", label: "Markets", icon: ChartIcon },
   { href: "/portfolio", label: "Portfolio", icon: GridIcon },
+  { href: "/basket", label: "Basket", icon: LayersIcon },
+  { href: "/rewards", label: "Rewards", icon: SparkIcon },
   { href: "/activity", label: "Activity", icon: ActivityIcon },
   { href: "/developers", label: "Developers", icon: CodeIcon },
 ] as const;
 
 const SECONDARY = [
+  { href: "/assistant", label: "Ask KYROX" },
   { href: "/status", label: "System status" },
   { href: "/developers", label: "Agent bridge (MCP)" },
   { href: "/legal", label: "Risk & terms" },
@@ -39,7 +52,7 @@ export function SiteNav() {
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
-  const simulated = environment?.simulated ?? true;
+  const simulated = environment?.simulated ?? false;
   const active = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
 
   return (
@@ -53,6 +66,7 @@ export function SiteNav() {
                 key={link.href}
                 href={link.href}
                 className={`nav-link ${active(link.href) ? "is-active" : ""}`}
+                aria-current={active(link.href) ? "page" : undefined}
               >
                 {link.label}
               </Link>
@@ -61,25 +75,26 @@ export function SiteNav() {
           <div className="nav-actions">
             <Link
               href="/status"
-              className={`env-chip ${simulated ? "is-simulated" : "is-live"}`}
+              className={`env-chip ${environment === null ? "" : simulated ? "is-simulated" : "is-live"}`}
               title="Environment status"
             >
               <span className="env-dot" />
-              {simulated ? "Preview · simulated" : "Base Sepolia"}
+              {environmentShortLabel(environment)}
             </Link>
             <ConnectButton />
             <button
               className="icon-button nav-menu-button"
               onClick={() => setOpen((value) => !value)}
               aria-expanded={open}
-              aria-label="Open menu"
+              aria-controls="mobile-menu"
+              aria-label={open ? "Close menu" : "Open menu"}
             >
               {open ? <CloseIcon size={18} /> : <GridIcon size={18} />}
             </button>
           </div>
         </div>
         {open && (
-          <div className="menu-sheet">
+          <div className="menu-sheet" id="mobile-menu">
             <nav aria-label="Secondary">
               {SECONDARY.map((link) => (
                 <Link key={`${link.href}-${link.label}`} href={link.href}>
@@ -102,13 +117,18 @@ export function SiteNav() {
               key={link.href}
               href={link.href}
               className={`mobile-tab ${active(link.href) ? "is-active" : ""}`}
+              aria-current={active(link.href) ? "page" : undefined}
             >
               <Icon size={19} />
               <span>{link.label}</span>
             </Link>
           );
         })}
-        <Link href="/status" className={`mobile-tab ${active("/status") ? "is-active" : ""}`}>
+        <Link
+          href="/status"
+          className={`mobile-tab ${active("/status") ? "is-active" : ""}`}
+          aria-current={active("/status") ? "page" : undefined}
+        >
           <InfoIcon size={19} />
           <span>Status</span>
         </Link>

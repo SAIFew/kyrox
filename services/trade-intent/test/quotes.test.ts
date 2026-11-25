@@ -43,6 +43,16 @@ const observation = {
   sourceKind: "chainlink-coinbase" as const,
 };
 
+const canonical = {
+  priceUsdcPerWholeToken: observation.priceUsdcPerWholeToken,
+  sourceRoundId: observation.sourceRoundId,
+  sourceUpdatedAt: observation.sourceUpdatedAt,
+  publishedAt: NOW,
+  sourceChainId: observation.sourceChainId,
+  feedAddress: FEED,
+  simulated: false,
+};
+
 const freshness: AssetFreshnessConfig = {
   assetSymbol: "tAAPL",
   maxSourceAgeSeconds: 60,
@@ -81,17 +91,28 @@ class FakePolicy implements TrustedPolicySource {
   }
 }
 
-function service(policy: FakePolicy, ttl = 60): QuoteService {
+function service(
+  policy: FakePolicy,
+  ttl = 60,
+  tradeReader: typeof reader = reader,
+  exchange: Address = EXCHANGE,
+): QuoteService {
   return new QuoteService({
     secret: "a".repeat(48),
     store: new InMemoryIssuedQuoteStore(),
     policy,
     policyConfig: TESTNET_TRADE_POLICY,
+    exchange,
+    reader: tradeReader,
     maxTtlSeconds: ttl,
   });
 }
 
-const reader = { getChainId: async () => 84_532, getTokenDecimals: async () => 18 };
+const reader = {
+  getChainId: async () => 84_532,
+  getTokenDecimals: async () => 18,
+  readObservation: async () => canonical,
+};
 
 async function issued(policy: FakePolicy) {
   const quoteService = service(policy);
@@ -120,6 +141,7 @@ describe("server-issued quote boundary", () => {
     const policy = new FakePolicy();
     const { quoteService, result } = await issued(policy);
     expect(result.expiresAt).toBe(NOW + 60);
+    expect(result.ttlSeconds).toBe(60);
 
     const intent = await quoteService.prepareIntent({
       ...prepareParams,
@@ -171,6 +193,8 @@ describe("server-issued quote boundary", () => {
       store,
       policy,
       policyConfig: TESTNET_TRADE_POLICY,
+      exchange: EXCHANGE,
+      reader,
       maxTtlSeconds: 60,
     });
     const issued2 = await service2.issueQuote({
@@ -263,6 +287,62 @@ describe("server-issued quote boundary", () => {
         deadline: NOW + 30,
       }),
     ).rejects.toBeInstanceOf(IntentError);
+  });
+
+  it("fails closed on RPC chain, decimals, or canonical observation divergence", async () => {
+    const policy = new FakePolicy();
+    await expect(
+      service(policy, 60, { ...reader, getChainId: async () => 8_453 }).issueQuote({
+        session: { trader: TRADER },
+        asset,
+        observation,
+        side: "buy",
+        amountIn: 1_000_000n,
+        maxSlippageBps: 50,
+      }),
+    ).rejects.toMatchObject({ code: "WRONG_CHAIN" });
+
+    await expect(
+      service(policy, 60, { ...reader, getTokenDecimals: async () => 6 }).issueQuote({
+        session: { trader: TRADER },
+        asset,
+        observation,
+        side: "buy",
+        amountIn: 1_000_000n,
+        maxSlippageBps: 50,
+      }),
+    ).rejects.toMatchObject({ code: "DECIMALS_MISMATCH" });
+
+    await expect(
+      service(policy, 60, {
+        ...reader,
+        readObservation: async () => ({ ...canonical, priceUsdcPerWholeToken: 231_000_000n }),
+      }).issueQuote({
+        session: { trader: TRADER },
+        asset,
+        observation,
+        side: "buy",
+        amountIn: 1_000_000n,
+        maxSlippageBps: 50,
+      }),
+    ).rejects.toMatchObject({ code: "QUOTE_MISMATCH" });
+  });
+
+  it("rechecks the canonical observation during intent preparation", async () => {
+    const policy = new FakePolicy();
+    const { quoteService, result } = await issued(policy);
+    await expect(
+      quoteService.prepareIntent({
+        ...prepareParams,
+        session: { trader: TRADER },
+        quoteId: result.quoteId,
+        quoteToken: result.quoteToken,
+        reader: {
+          ...reader,
+          readObservation: async () => ({ ...canonical, simulated: true }),
+        },
+      }),
+    ).rejects.toMatchObject({ code: "QUOTE_MISMATCH" });
   });
 
   it("caps TTL server-side and rejects an excessive configuration", async () => {

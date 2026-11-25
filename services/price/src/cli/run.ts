@@ -16,7 +16,8 @@ import type { ObservationStore } from "../persistence/types.js";
 import { PublicationError, prepareSetPricePublication } from "../publication/prepare.js";
 import type { IngestCliConfig } from "./config.js";
 
-export type PublicationOutcomeStatus = "prepared" | "blocked" | "duplicate" | "rejected";
+export type PublicationOutcomeStatus =
+  "prepared" | "blocked" | "disabled" | "duplicate" | "rejected";
 
 export interface PublicationOutcome {
   readonly assetSymbol: string;
@@ -39,6 +40,7 @@ export interface IngestReport {
     | { readonly checked: true; readonly healthy: true; readonly detail: string }
     | { readonly checked: true; readonly healthy: false; readonly detail: string };
   readonly ingestion: IngestionSummary;
+  readonly publication: { readonly enabled: boolean };
   readonly publications: readonly PublicationOutcome[];
   readonly status: "ok" | "partial" | "blocked" | "failed";
 }
@@ -74,6 +76,12 @@ export async function runIngestOnce(
   const feeds = config.assetSymbols.map((symbol) => feedForAsset(symbol));
 
   const logger = deps.logger ?? (() => undefined);
+  const disabledPublications = (): PublicationOutcome[] =>
+    config.assetSymbols.map((assetSymbol) => ({
+      assetSymbol,
+      status: "disabled",
+      reason: "PRICE_PUBLICATION_ENABLED is not explicitly true; publication is disabled.",
+    }));
 
   const recordSequencerEvents = async (
     outcome: "sequencer_blocked" | "sequencer_error",
@@ -105,7 +113,8 @@ export async function runIngestOnce(
         chainId: 8_453,
         sequencer: { checked: true, healthy: false, detail },
         ingestion: { published: 0, duplicates: 0, invalid: 0, errors: 0, blocked: feeds.length },
-        publications: [],
+        publication: { enabled: config.pricePublicationEnabled },
+        publications: config.pricePublicationEnabled ? [] : disabledPublications(),
         status: "blocked",
       };
     }
@@ -118,6 +127,7 @@ export async function runIngestOnce(
       chainId: 8_453,
       sequencer: { checked: true, healthy: false, detail },
       ingestion: { published: 0, duplicates: 0, invalid: 0, errors: 1, blocked: feeds.length },
+      publication: { enabled: config.pricePublicationEnabled },
       publications: [],
       status: "blocked",
     };
@@ -133,21 +143,24 @@ export async function runIngestOnce(
 
   const ingestion = await worker.runOnce();
 
-  const manifest = deps.loadManifest(config.manifestPath);
   const publications: PublicationOutcome[] = [];
   const now = nowSeconds();
 
-  for (const symbol of config.assetSymbols) {
-    const latest = await deps.store.latestValidObservation(symbol);
-    if (latest === null) {
-      publications.push({
-        assetSymbol: symbol,
-        status: "blocked",
-        reason: "no valid observation is stored yet",
-      });
-      continue;
-    }
+  if (!config.pricePublicationEnabled) {
+    return {
+      mode: "one-shot",
+      chainId: 8_453,
+      sequencer: sequencerReport,
+      ingestion,
+      publication: { enabled: false },
+      publications: disabledPublications(),
+      status: "ok",
+    };
+  }
 
+  const manifest = deps.loadManifest(config.manifestPath);
+
+  for (const symbol of config.assetSymbols) {
     if (manifest === null) {
       publications.push({
         assetSymbol: symbol,
@@ -183,6 +196,18 @@ export async function runIngestOnce(
       continue;
     }
 
+    const expectedFeed =
+      manifest.environment === "local-anvil" ? ZERO_ADDRESS : feedForAsset(symbol).feedAddress;
+    const latest = await deps.store.latestValidObservation(symbol, expectedFeed);
+    if (latest === null) {
+      publications.push({
+        assetSymbol: symbol,
+        status: "blocked",
+        reason: `no valid observation is stored yet for expected feed ${expectedFeed}`,
+      });
+      continue;
+    }
+
     try {
       const assetConfig = manifest.assets[symbol];
       const priceBounds =
@@ -202,7 +227,7 @@ export async function runIngestOnce(
         nowSeconds: now,
         maxSourceAgeSeconds: assetConfig?.maxSourceAgeSeconds ?? config.maxSourceAgeSeconds,
         ...(priceBounds !== undefined ? { priceBounds } : {}),
-        simulated: isZeroAddress(latest.feedAddress),
+        simulated: manifest.environment === "local-anvil" && isZeroAddress(latest.feedAddress),
         ...(lastPublishedRoundId !== null ? { lastPublishedRoundId } : {}),
       });
 
@@ -245,6 +270,7 @@ export async function runIngestOnce(
     chainId: 8_453,
     sequencer: sequencerReport,
     ingestion,
+    publication: { enabled: true },
     publications,
     status,
   };

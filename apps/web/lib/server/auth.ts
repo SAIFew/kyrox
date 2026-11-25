@@ -2,6 +2,8 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 import { verifyMessage, type Address, type Hex } from "viem";
 
+import { LOCAL_DEFAULT_APP_ORIGIN, siweOriginValues } from "./origin.js";
+
 export const NONCE_TTL_SECONDS = 300;
 export const SESSION_TTL_SECONDS = 3_600;
 
@@ -46,6 +48,7 @@ export class AuthError extends Error {
       | "INVALID_MESSAGE"
       | "SIGNATURE_INVALID"
       | "ADDRESS_MISMATCH"
+      | "ORIGIN_MISMATCH"
       | "SESSION_EXPIRED",
     message: string,
   ) {
@@ -77,12 +80,16 @@ export function authenticationMessage(parts: AuthMessageParts): string {
   ].join("\n");
 }
 
-export function parseAuthenticationMessage(message: string): {
+export interface ParsedAuthenticationMessage {
   address: Address;
+  host: string;
+  uri: string;
   nonce: string;
   issuedAt: string;
   expirationTime: string;
-} {
+}
+
+export function parseAuthenticationMessage(message: string): ParsedAuthenticationMessage {
   const lines = message.split("\n");
   if (lines.length < 9) {
     throw new AuthError("INVALID_MESSAGE", "Authentication message has an unexpected shape.");
@@ -93,6 +100,9 @@ export function parseAuthenticationMessage(message: string): {
       ?.slice(prefix.length)
       .trim();
   const address = lines[1];
+  const host = lines[0]?.endsWith(" wants you to sign in with Ethereum:")
+    ? lines[0].slice(0, -" wants you to sign in with Ethereum:".length).trim()
+    : undefined;
   const uri = get("URI: ");
   const chainId = get("Chain ID: ");
   const nonce = get("Nonce: ");
@@ -100,6 +110,8 @@ export function parseAuthenticationMessage(message: string): {
   const expirationTime = get("Expiration Time: ");
   if (
     address === undefined ||
+    host === undefined ||
+    host.length === 0 ||
     nonce === undefined ||
     uri === undefined ||
     chainId === undefined ||
@@ -114,21 +126,42 @@ export function parseAuthenticationMessage(message: string): {
   if (chainId !== "84532") {
     throw new AuthError("INVALID_MESSAGE", "Authentication message chain id is not supported.");
   }
-  return { address: address as Address, nonce, issuedAt, expirationTime };
+  return { address: address as Address, host, uri, nonce, issuedAt, expirationTime };
 }
 
-export async function issueNonce(store: AuthStore, address: string | null, now = new Date()) {
+/**
+ * Bind a parsed challenge to the approved application origin. Exact host and
+ * URI matching prevents a signed message from another deployment being
+ * replayed against this one.
+ */
+export function assertAuthenticationOrigin(
+  parsed: Pick<ParsedAuthenticationMessage, "host" | "uri">,
+  appOrigin: string,
+): void {
+  const expected = siweOriginValues(appOrigin);
+  if (parsed.host !== expected.host || parsed.uri !== expected.uri) {
+    throw new AuthError("ORIGIN_MISMATCH", "Authentication message origin is not approved.");
+  }
+}
+
+export async function issueNonce(
+  store: AuthStore,
+  address: string | null,
+  now = new Date(),
+  appOrigin = LOCAL_DEFAULT_APP_ORIGIN,
+) {
   const nonce = randomBytes(16).toString("hex");
   const issuedAt = now;
   const expiresAt = new Date(now.getTime() + NONCE_TTL_SECONDS * 1000);
+  const origin = siweOriginValues(appOrigin);
   await store.createNonce(address, issuedAt, expiresAt, nonce);
   return authenticationMessage({
     address: (address as Address | null) ?? "0x0000000000000000000000000000000000000000",
     nonce,
     issuedAt: issuedAt.toISOString(),
     expirationTime: expiresAt.toISOString(),
-    host: "KYROX",
-    uri: "https://kyrox.local/auth",
+    host: origin.host,
+    uri: origin.uri,
   });
 }
 
@@ -139,8 +172,10 @@ export async function verifyAuthentication(
   message: string,
   signature: Hex,
   now = new Date(),
+  appOrigin?: string,
 ): Promise<SessionRecord & { token: string }> {
   const parsed = parseAuthenticationMessage(message);
+  if (appOrigin !== undefined) assertAuthenticationOrigin(parsed, appOrigin);
   const nonce = await store.getNonce(parsed.nonce);
   if (nonce === null) throw new AuthError("INVALID_NONCE", "Nonce is not recognized.");
   if (nonce.usedAt !== null) throw new AuthError("NONCE_REPLAYED", "Nonce was already used.");

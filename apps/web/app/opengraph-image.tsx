@@ -1,6 +1,7 @@
 import { ImageResponse } from "next/og";
 
 import { DEMO_ASSETS } from "../lib/demo/market";
+import { assetDisplayName } from "../lib/presentation";
 
 export const alt = "KYROX — Tokenized equities with proof";
 export const size = { width: 1200, height: 630 };
@@ -50,7 +51,7 @@ export default function OpengraphImage() {
 
       <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
         <div style={{ color: "#7cf0c1", fontSize: 17, letterSpacing: 4 }}>
-          PUBLIC PREVIEW · SIMULATED VENUE
+          TESTNET PREVIEW · ENVIRONMENT LABELS IN APP
         </div>
         <div
           style={{
@@ -71,7 +72,7 @@ export default function OpengraphImage() {
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: 14 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 14, maxWidth: 1056 }}>
         {DEMO_ASSETS.map((asset) => (
           <div
             key={asset.symbol}
@@ -85,7 +86,7 @@ export default function OpengraphImage() {
               padding: "10px 18px",
             }}
           >
-            <span style={{ color: asset.accent }}>{asset.symbol}</span>
+            <span style={{ color: asset.accent }}>{assetDisplayName(asset.symbol)}</span>
             <span style={{ color: "#677386" }}>reference market</span>
           </div>
         ))}

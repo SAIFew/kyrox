@@ -101,7 +101,7 @@ def test_successful_tool_operations_write_valid_jsonl_audit_logs() -> None:
     assert stock["ticker"] == "tAAPL"
 
     stocks = server.list_stocks()
-    assert len(stocks) == 3
+    assert len(stocks) == 7
 
     entries = _read_jsonl_entries(logger.log_file)
     assert len(entries) == 3

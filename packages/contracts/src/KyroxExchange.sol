@@ -109,6 +109,7 @@ contract KyroxExchange is AccessControl, Pausable, ReentrancyGuard, IKyroxPriceS
     error SourceTimestampWentBackwards(uint256 provided, uint256 previous);
     error InvalidSourceProvenance();
     error UnexpectedTransferAmount(uint256 expected, uint256 received);
+    error UnexpectedMintAmount(uint256 expected, uint256 received);
     error ZeroOutput();
     error SlippageExceeded(uint256 amountOut, uint256 minAmountOut);
     error DeadlineExpired(uint256 deadline);
@@ -248,7 +249,9 @@ contract KyroxExchange is AccessControl, Pausable, ReentrancyGuard, IKyroxPriceS
             uint256 difference = priceUsdcPerWholeToken > previousPrice
                 ? priceUsdcPerWholeToken - previousPrice
                 : previousPrice - priceUsdcPerWholeToken;
-            if (difference * 10_000 > previousPrice * settings.maxPriceDeviationBps) {
+            // Compare the full-width ratio. Multiplying both sides by the BPS
+            // denominator can overflow even when the configured band is valid.
+            if (Math.mulDiv(difference, 10_000, previousPrice) > settings.maxPriceDeviationBps) {
                 revert PriceDeviationExceeded(
                     priceUsdcPerWholeToken, previousPrice, settings.maxPriceDeviationBps
                 );
@@ -315,7 +318,7 @@ contract KyroxExchange is AccessControl, Pausable, ReentrancyGuard, IKyroxPriceS
         if (block.timestamp > deadline) revert DeadlineExpired(deadline);
         if (usdcIn == 0) revert ZeroAmount();
         AssetSettings memory settings = _requireListed(stockToken);
-        Observation memory obs = _requireFresh(stockToken, settings);
+        Observation memory obs = _requireTradeObservation(stockToken, settings);
 
         stockOut = Math.mulDiv(
             usdcIn, 10 ** uint256(settings.stockDecimals), obs.priceUsdcPerWholeToken
@@ -329,7 +332,11 @@ contract KyroxExchange is AccessControl, Pausable, ReentrancyGuard, IKyroxPriceS
         if (received != usdcIn) revert UnexpectedTransferAmount(usdcIn, received);
 
         usdc.burnByExchange(address(this), usdcIn);
+        uint256 stockBefore = IERC20(stockToken).balanceOf(msg.sender);
         ITestStock(stockToken).mintByExchange(msg.sender, stockOut);
+        uint256 stockAfter = IERC20(stockToken).balanceOf(msg.sender);
+        uint256 minted = stockAfter >= stockBefore ? stockAfter - stockBefore : 0;
+        if (minted != stockOut) revert UnexpectedMintAmount(stockOut, minted);
 
         emit Trade(
             msg.sender,
@@ -357,7 +364,7 @@ contract KyroxExchange is AccessControl, Pausable, ReentrancyGuard, IKyroxPriceS
         if (block.timestamp > deadline) revert DeadlineExpired(deadline);
         if (stockIn == 0) revert ZeroAmount();
         AssetSettings memory settings = _requireListed(stockToken);
-        Observation memory obs = _requireFresh(stockToken, settings);
+        Observation memory obs = _requireTradeObservation(stockToken, settings);
 
         usdcOut = Math.mulDiv(
             stockIn, obs.priceUsdcPerWholeToken, 10 ** uint256(settings.stockDecimals)
@@ -451,6 +458,28 @@ contract KyroxExchange is AccessControl, Pausable, ReentrancyGuard, IKyroxPriceS
         uint256 maxAge = settings.maxSourceAgeSeconds;
         if (maxAge == 0 || block.timestamp > uint256(obs.sourceUpdatedAt) + maxAge) {
             revert StalePrice(obs.sourceUpdatedAt, settings.maxSourceAgeSeconds);
+        }
+        return obs;
+    }
+
+    /// @dev An admin may tighten the plausibility band after publication. Trading
+    /// must reject the stored observation immediately when it is outside the
+    /// current bounds; freshness alone is not sufficient authorization to trade.
+    function _requireTradeObservation(address stockToken, AssetSettings memory settings)
+        private
+        view
+        returns (Observation memory)
+    {
+        Observation memory obs = _requireFresh(stockToken, settings);
+        if (
+            obs.priceUsdcPerWholeToken < settings.minPriceUsdcPerWholeToken
+                || obs.priceUsdcPerWholeToken > settings.maxPriceUsdcPerWholeToken
+        ) {
+            revert PriceOutsideBounds(
+                obs.priceUsdcPerWholeToken,
+                settings.minPriceUsdcPerWholeToken,
+                settings.maxPriceUsdcPerWholeToken
+            );
         }
         return obs;
     }

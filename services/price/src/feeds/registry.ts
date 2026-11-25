@@ -12,15 +12,17 @@ const REFERENCE_DIRECTORY =
  * Verified Coinbase tokenized-equity feeds on Base Mainnet.
  *
  * Every address below was read from Chainlink's reference data directory and the
- * Base documentation, then confirmed on Base Mainnet on 2026-11-21:
- * code present, `decimals() == 8`, matching `description()`, positive answer,
- * `answeredInRound == roundId`.
+ * Base documentation. The tAAPL/tTSLA/tNVDA entries were confirmed on Base
+ * Mainnet on 2026-11-21: code present, `decimals() == 8`, matching
+ * `description()`, positive answer, `answeredInRound == roundId`. The
+ * AMZN/GOOGL/META/MSFT entries were confirmed read-only on 2026-11-25:
+ * `decimals() == 8` with a matching `description()` on Base Mainnet.
  *
  * The synthetic testnet assets are NOT Coinbase B20 tokens. These entries only
  * bind each synthetic asset to the reference feed whose value it mirrors.
  *
- * Other verified feeds (AMZN, GOOGL, META, MSFT, MSTR, SNDK, SPCX, INTC, COIN,
- * CRCL) exist but have no corresponding synthetic asset, so they are not listed.
+ * Other verified feeds (MSTR, SNDK, SPCX, INTC, COIN, CRCL) exist but have no
+ * corresponding synthetic asset, so they are not listed.
  * 24/7 variants exist for GOOGL, NVDA and TSLA; they are deliberately not
  * enabled because the product has not decided to trade outside equity hours.
  */
@@ -56,6 +58,50 @@ export const VERIFIED_FEEDS: readonly FeedConfig[] = [
     expectedDescription: "Coinbase NVDA",
     source: `${CHAINLINK_DOCS} ; ${BASE_DOCS}`,
     verifiedAt: "2026-11-21",
+    enabled: true,
+  },
+  {
+    assetSymbol: "tAMZN",
+    referenceSymbol: "AMZN",
+    feedAddress: "0x06A8E4b3aBB3B7543d8396FB2B763d22820cB295",
+    expectedChainId: SOURCE_CHAIN_ID,
+    expectedDecimals: 8,
+    expectedDescription: "Coinbase AMZN",
+    source: `${CHAINLINK_DOCS} ; ${BASE_DOCS}`,
+    verifiedAt: "2026-11-25",
+    enabled: true,
+  },
+  {
+    assetSymbol: "tGOOGL",
+    referenceSymbol: "GOOGL",
+    feedAddress: "0x5bF49E0ffA937CE2FfF033c739aD7C634c4D34F2",
+    expectedChainId: SOURCE_CHAIN_ID,
+    expectedDecimals: 8,
+    expectedDescription: "Coinbase GOOGL",
+    source: `${CHAINLINK_DOCS} ; ${BASE_DOCS}`,
+    verifiedAt: "2026-11-25",
+    enabled: true,
+  },
+  {
+    assetSymbol: "tMETA",
+    referenceSymbol: "META",
+    feedAddress: "0x6526aE6797A76123638b863AeE4dD27Ba4E4b27D",
+    expectedChainId: SOURCE_CHAIN_ID,
+    expectedDecimals: 8,
+    expectedDescription: "Coinbase META",
+    source: `${CHAINLINK_DOCS} ; ${BASE_DOCS}`,
+    verifiedAt: "2026-11-25",
+    enabled: true,
+  },
+  {
+    assetSymbol: "tMSFT",
+    referenceSymbol: "MSFT",
+    feedAddress: "0xeB10A6c9aa7E537aEd766C08c35Dae35B321b18c",
+    expectedChainId: SOURCE_CHAIN_ID,
+    expectedDecimals: 8,
+    expectedDescription: "Coinbase MSFT",
+    source: `${CHAINLINK_DOCS} ; ${BASE_DOCS}`,
+    verifiedAt: "2026-11-25",
     enabled: true,
   },
 ];

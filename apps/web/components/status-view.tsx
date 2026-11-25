@@ -7,6 +7,12 @@ import type { EnvironmentInfo } from "../lib/market-types";
 import { api } from "../lib/api";
 import { timeAgo } from "../lib/format";
 import {
+  contractsLabel,
+  environmentDisclosure,
+  environmentLabel,
+  priceSourceLabel,
+} from "../lib/presentation";
+import {
   ArrowUpRight,
   ChartIcon,
   CodeIcon,
@@ -49,7 +55,10 @@ export function StatusView() {
     const load = async () => {
       try {
         const payload = await api<StatusPayload>("/api/status");
-        if (active) setData(payload);
+        if (active) {
+          setData(payload);
+          setError("");
+        }
       } catch (err) {
         if (active) setError(err instanceof Error ? err.message : "Status is unavailable.");
       }
@@ -62,6 +71,16 @@ export function StatusView() {
     };
   }, []);
 
+  const environment = data?.environment;
+  const summaryTone =
+    environment === undefined
+      ? "off"
+      : environment.simulated
+        ? "sim"
+        : environment.contracts === "deployed"
+          ? "ok"
+          : "warn";
+
   return (
     <div className="page-width page-stack">
       <header className="page-head">
@@ -73,16 +92,20 @@ export function StatusView() {
             Every layer reports its real state, including the ones that are not deployed.
           </p>
         </div>
-        <div className="status-summary">
-          <span className="status-light sim" />
+        <div className="status-summary" role="status" aria-live="polite">
+          <span className={`status-light ${summaryTone}`} />
           <div>
-            <strong>Public preview</strong>
+            <strong>{environmentLabel(environment)}</strong>
             <span>{data === null ? "Checking…" : `Updated ${timeAgo(data.generatedAt)}`}</span>
           </div>
         </div>
       </header>
 
-      {error.length > 0 && <div className="callout callout-danger">{error}</div>}
+      {error.length > 0 && (
+        <div className="callout callout-danger" role="alert" aria-live="assertive">
+          {error}
+        </div>
+      )}
 
       <section className="panel">
         <div className="panel-head">
@@ -90,7 +113,7 @@ export function StatusView() {
             <h2>Service checks</h2>
             <p className="muted small">Polled every 30 seconds from the running application.</p>
           </div>
-          <span className="sim-badge">live check</span>
+          <span className="sim-badge">30s check</span>
         </div>
         <div className="status-table">
           {(data?.checks ?? []).map((check) => (
@@ -115,8 +138,9 @@ export function StatusView() {
           <div>
             <strong>Network</strong>
             <span>
-              {data?.environment.chainName ?? "Base Sepolia"} · chain{" "}
-              {data?.environment.chainId ?? 84532}
+              {environment === undefined
+                ? "Checking…"
+                : `${environment.chainName} · chain ${environment.chainId}`}
             </span>
           </div>
         </div>
@@ -124,14 +148,14 @@ export function StatusView() {
           <LockIcon size={18} />
           <div>
             <strong>Contracts</strong>
-            <span>{data?.environment.contracts.replaceAll("-", " ") ?? "not deployed"}</span>
+            <span>{contractsLabel(environment)}</span>
           </div>
         </div>
         <div className="status-tile large">
           <LayersIcon size={18} />
           <div>
             <strong>Price publication</strong>
-            <span>{data?.environment.pricePublication ?? "simulated"}</span>
+            <span>{priceSourceLabel(environment)}</span>
           </div>
         </div>
         <div className="status-tile large">
@@ -184,21 +208,20 @@ export function StatusView() {
           </div>
           <div className="arch-arrow">↓</div>
           <div className="arch-layer">
-            <span className="arch-label">Settlement (not deployed)</span>
+            <span className="arch-label">Settlement ({contractsLabel(environment)})</span>
             <div className="arch-nodes dim">
               <span>KyroxExchange</span>
-              <span>TestUSDC</span>
+              <span>Test USDC</span>
               <span>Stock tokens</span>
-              <span>Base Sepolia</span>
+              <span>{environment?.chainName ?? "Checking network"}</span>
             </div>
           </div>
         </div>
         <div className="callout callout-warn compact">
           <InfoIcon size={15} />
           <p>
-            The preview replaces the persistence and settlement layers with signed, local
-            simulation. The quote and policy engine is the same deterministic implementation used by
-            the contract tests.
+            {environmentDisclosure(environment)} The quote and policy engine is the same
+            deterministic implementation used by the contract tests.
           </p>
         </div>
       </section>
@@ -221,8 +244,18 @@ export function StatusView() {
             <ChartIcon size={17} /> Known gaps
           </h2>
           <ul className="check-list">
-            <li>No Base Sepolia deployment manifest is approved.</li>
-            <li>No live Chainlink publication worker is attached to this host.</li>
+            <li>
+              {environment?.contracts === "deployed"
+                ? "The running environment reports a deployed testnet manifest."
+                : environment?.contracts === "local"
+                  ? "Only a local Anvil manifest is active; it is not a public deployment."
+                  : "No deployed contract manifest is active in this environment."}
+            </li>
+            <li>
+              {environment?.pricePublication === "simulated"
+                ? "No live price publication worker is attached to this host."
+                : "Price publication is configured; worker health is reported in the service checks."}
+            </li>
             <li>The durable event indexer is a Phase 2 scaffold.</li>
             <li>Mainnet trading is not available and is not planned in this phase.</li>
           </ul>
@@ -237,7 +270,7 @@ export function StatusView() {
           <strong>
             <SparkIcon size={14} /> Verification, not vibes.
           </strong>
-          <span>{data?.disclaimer ?? "The public preview is a simulated venue."}</span>
+          <span>{environmentDisclosure(environment)}</span>
         </div>
         <Link className="button button-primary" href="/markets">
           Explore markets <ArrowUpRight size={15} />

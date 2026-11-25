@@ -1,8 +1,9 @@
+import { randomUUID } from "node:crypto";
+
 import {
   BASE_SEPOLIA_CHAIN_ID,
   TESTNET_ASSETS,
   TESTNET_TRADE_POLICY,
-  assertPolicyAllows,
   createQuote,
   evaluateTradePolicy,
   fromBaseUnits,
@@ -12,25 +13,35 @@ import {
 } from "@kyrox/core";
 
 import type { QuotePayload, TradeSide } from "../market-types.js";
+import { defaultTestnetFreshnessConfig } from "../server/freshness.js";
 import { demoAsset, demoObservation, priceAt } from "./market.js";
 import {
   applyFill,
   balanceOf,
   dailySpentUsdc,
+  isDemoQuoteConsumed,
   seal,
   unseal,
   type DemoFill,
   type DemoSession,
 } from "./session.js";
 
-const QUOTE_TTL_SECONDS = 120;
+const QUOTE_TTL_SECONDS = 30;
 const PRICE_BOUNDS: PriceBounds = {
   minPriceUsdcPerWholeToken: 1_000_000n,
   maxPriceUsdcPerWholeToken: 1_000_000_000_000n,
 };
+/**
+ * The demo venue reuses the testnet freshness config instead of a literal.
+ * Simulated observations are bucket-timestamped and normally seconds old, so
+ * this bound is a guard, not a licence to accept stale prices.
+ */
+function demoFreshness(symbol: string) {
+  return defaultTestnetFreshnessConfig(symbol);
+}
 
 interface StoredDemoQuote {
-  v: 1;
+  v: 2;
   q: string;
   a: string;
   s: string;
@@ -39,7 +50,11 @@ interface StoredDemoQuote {
   ao: string;
   min: string;
   p: string;
+  r: string;
   su: number;
+  sc: number;
+  sk: "simulated";
+  sd: number;
   exp: number;
 }
 
@@ -91,11 +106,7 @@ function quoteFor(
     {
       nowSeconds: now,
       chainId: BASE_SEPOLIA_CHAIN_ID,
-      freshnessConfig: {
-        assetSymbol: symbol,
-        maxSourceAgeSeconds: 3_600,
-        requireOpenMarket: false,
-      },
+      freshnessConfig: demoFreshness(symbol),
       session: "open",
       priceBounds: PRICE_BOUNDS,
       quoteTtlSeconds: QUOTE_TTL_SECONDS,
@@ -109,14 +120,9 @@ function quoteFor(
     exchangePaused: false,
     assetEnabled: true,
     session: "open",
-    freshness: {
-      assetSymbol: symbol,
-      maxSourceAgeSeconds: 3_600,
-      requireOpenMarket: false,
-    },
+    freshness: demoFreshness(symbol),
     priceBounds: PRICE_BOUNDS,
   });
-  assertPolicyAllows(decision);
 
   const symbolIn = side === "buy" ? "tUSDC" : symbol;
   if (balanceOf(session, symbolIn) < amountIn) {
@@ -163,9 +169,9 @@ export function createDemoQuote(input: {
         : (friendly[first.code] ?? first.message),
     );
   }
-  const quoteId = `${now.toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+  const quoteId = randomUUID();
   const token = seal({
-    v: 1,
+    v: 2,
     q: quoteId,
     a: input.session.address.toLowerCase(),
     s: input.symbol,
@@ -174,7 +180,11 @@ export function createDemoQuote(input: {
     ao: quote.amountOut.toString(),
     min: quote.minAmountOut.toString(),
     p: quote.priceUsdcPerWholeToken.toString(),
+    r: quote.sourceRoundId.toString(),
     su: quote.sourceUpdatedAt,
+    sc: quote.sourceChainId,
+    sk: "simulated",
+    sd: quote.stockDecimals,
     exp: quote.expiresAt,
   } satisfies StoredDemoQuote);
   const spent = dailySpentUsdc(input.session, now * 1_000);
@@ -198,6 +208,7 @@ export function createDemoQuote(input: {
     ),
     sourceUpdatedAt: quote.sourceUpdatedAt,
     expiresAt: quote.expiresAt,
+    ttlSeconds: QUOTE_TTL_SECONDS,
     simulated: true,
     simulatedPrice: true,
     limits: {
@@ -215,22 +226,53 @@ export function executeDemoQuote(input: {
   quoteToken: string;
   now?: number;
 }): { session: DemoSession; fill: DemoFill } {
-  const now = input.now ?? Math.floor(Date.now() / 1000);
+  const now = input.now ?? Math.floor(Date.now() / 1_000);
   const stored = unseal<StoredDemoQuote>(input.quoteToken);
-  if (stored === null || stored.v !== 1) {
+  if (stored === null || stored.v !== 2) {
     throw new DemoQuoteError("invalid_quote", "Quote token is invalid. Request a new quote.");
   }
   if (stored.q !== input.quoteId) {
     throw new DemoQuoteError("invalid_quote", "Quote id does not match the signed quote.");
   }
-  if (stored.a !== input.session.address.toLowerCase()) {
+  if (typeof stored.a !== "string" || stored.a !== input.session.address.toLowerCase()) {
     throw new DemoQuoteError("invalid_quote", "Quote belongs to a different account.", 403);
+  }
+  if (isDemoQuoteConsumed(input.session, input.quoteId, now)) {
+    throw new DemoQuoteError("quote_replayed", "Quote has already been used.", 409);
   }
   if (stored.exp <= now) {
     throw new DemoQuoteError("quote_expired", "Quote expired. Request a fresh quote.");
   }
+  if (demoAsset(stored.s) === null || (stored.side !== "buy" && stored.side !== "sell")) {
+    throw new DemoQuoteError("invalid_quote", "Quote asset or side is invalid.");
+  }
+  if (
+    stored.sk !== "simulated" ||
+    stored.sc !== BASE_SEPOLIA_CHAIN_ID ||
+    stored.sd !== assetDefinition(stored.s).stockDecimals ||
+    !Number.isInteger(stored.su) ||
+    stored.su <= 0 ||
+    stored.su > now
+  ) {
+    throw new DemoQuoteError("invalid_quote", "Quote provenance is invalid.");
+  }
 
-  const expectedPrice = BigInt(stored.p);
+  let expectedPrice: bigint;
+  let amountIn: bigint;
+  let minOut: bigint;
+  let sourceRoundId: bigint;
+  try {
+    expectedPrice = BigInt(stored.p);
+    amountIn = BigInt(stored.ai);
+    minOut = BigInt(stored.min);
+    sourceRoundId = BigInt(stored.r);
+  } catch {
+    throw new DemoQuoteError("invalid_quote", "Quote amounts are invalid.");
+  }
+  if (expectedPrice <= 0n || amountIn <= 0n || minOut <= 0n || sourceRoundId <= 0n) {
+    throw new DemoQuoteError("invalid_quote", "Quote amounts are invalid.");
+  }
+
   const currentPrice = priceAt(stored.s, now);
   const movePct = Number(currentPrice - expectedPrice) / Number(expectedPrice);
   if (Math.abs(movePct) > 0.01) {
@@ -240,9 +282,10 @@ export function executeDemoQuote(input: {
     );
   }
 
-  const amountIn = BigInt(stored.ai);
-  const minOut = BigInt(stored.min);
-  const { quote } = quoteFor(input.session, stored.s, stored.side, amountIn, 0, now);
+  const { quote, decision } = quoteFor(input.session, stored.s, stored.side, amountIn, 0, now);
+  if (!decision.allowed) {
+    throw new DemoQuoteError("policy_rejected", "Trade policy rejected the simulated order.");
+  }
   const currentOut = quote.amountOut;
   if (currentOut < minOut) {
     throw new DemoQuoteError(
@@ -251,13 +294,21 @@ export function executeDemoQuote(input: {
     );
   }
 
-  const { session, fill } = applyFill(input.session, {
-    symbol: stored.s,
-    side: stored.side,
-    amountIn: stored.ai,
-    amountOut: currentOut.toString(),
-    priceUsdc: currentPrice.toString(),
-  });
+  const { session, fill } = applyFill(
+    input.session,
+    {
+      symbol: stored.s,
+      side: stored.side,
+      amountIn: stored.ai,
+      amountOut: currentOut.toString(),
+      priceUsdc: currentPrice.toString(),
+    },
+    {
+      nowMs: now * 1_000,
+      consumedQuoteId: input.quoteId,
+      quoteExpiresAt: stored.exp,
+    },
+  );
   return { session, fill };
 }
 

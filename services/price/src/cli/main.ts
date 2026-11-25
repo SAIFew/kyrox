@@ -13,8 +13,9 @@ import { exitCodeFor, runIngestOnce } from "./run.js";
 /**
  * One-shot price ingestion entrypoint.
  *
- * Reads Base Mainnet only, writes PostgreSQL and (optionally) prepares unsigned
- * Sepolia calldata. It never signs or broadcasts.
+ * Reads Base Mainnet only, writes PostgreSQL and (only when
+ * PRICE_PUBLICATION_ENABLED is explicitly true) prepares unsigned Sepolia
+ * calldata. It never signs or broadcasts.
  */
 export async function main(
   env: Readonly<Record<string, string | undefined>> = process.env,

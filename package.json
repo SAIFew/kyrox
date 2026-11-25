@@ -28,8 +28,12 @@
     "activate:sepolia-manifest": "tsx scripts/activate-sepolia-manifest.ts",
     "local:bootstrap": "tsx scripts/local-bootstrap.ts",
     "local:e2e": "bash scripts/local-e2e.sh",
+    "migrate": "node --input-type=module -e \"import { spawnSync } from 'node:child_process'; const url = process.env.DIRECT_DATABASE_URL?.trim() || process.env.DATABASE_URL?.trim(); if (!url) { console.error('DIRECT_DATABASE_URL or DATABASE_URL is required.'); process.exit(2); } const result = spawnSync('pnpm', ['--filter', '@kyrox/db', 'exec', 'drizzle-kit', 'migrate'], { stdio: 'inherit', env: { ...process.env, DATABASE_URL: url } }); process.exit(result.status ?? 1);\"",
     "build:marketing": "pnpm --filter @kyrox/marketing build",
-    "scan:secrets": "node scripts/scan-secrets.mjs"
+    "validate:marketing": "node apps/marketing/scripts/validate.mjs",
+    "scan:secrets": "node scripts/scan-secrets.mjs",
+    "indexer:run": "tsx services/indexer/src/cli.ts",
+    "admin:grant": "tsx scripts/grant-admin.ts"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

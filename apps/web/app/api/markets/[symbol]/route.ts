@@ -1,63 +1,70 @@
-import { NextResponse } from "next/server";
-
 import { fromBaseUnits } from "@kyrox/core";
+import { DrizzleObservationStore } from "@kyrox/price";
 
 import { demoAsset, demoDetail, isChartRange } from "@/lib/demo/market";
 import { isDemoMode } from "@/lib/demo/mode";
+import { appDatabase } from "@/lib/server/database";
 import { environmentInfo } from "@/lib/server/session";
-import { loadEnvironment } from "@/lib/server/env";
+import { exchangeAddress, loadEnvironment } from "@/lib/server/env";
 import { createChainClient, EXCHANGE_VIEWS_ABI } from "@/lib/server/chain";
-import { DrizzleObservationStore } from "@kyrox/price";
-import { createDatabase } from "@kyrox/db";
+import { isObservationFresh } from "@/lib/server/freshness";
+import { clientIp, error, json, rateLimit, routeError } from "@/lib/server/http";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request, context: { params: Promise<{ symbol: string }> }) {
-  const { symbol } = await context.params;
-  const rangeParam = new URL(request.url).searchParams.get("range");
-  const range = isChartRange(rangeParam) ? rangeParam : "1W";
-  const now = Math.floor(Date.now() / 1_000);
-
-  if (isDemoMode()) {
-    const detail = demoDetail(symbol, range, now);
-    if (detail === null) {
-      return NextResponse.json({ error: "Unknown market." }, { status: 404 });
-    }
-    return NextResponse.json({ environment: environmentInfo(), market: detail });
-  }
-
-  const asset = demoAsset(symbol);
-  if (asset === null) return NextResponse.json({ error: "Unknown market." }, { status: 404 });
-  const env = loadEnvironment();
-  const db = createDatabase(env.databaseUrl);
   try {
-    const observation = await new DrizzleObservationStore(db.db).latestValidObservation(symbol);
-    const settings = env.manifest.assets[symbol];
-    if (settings === undefined) {
-      return NextResponse.json({ error: "Asset is not configured." }, { status: 404 });
+    const { symbol } = await context.params;
+    const rangeParam = new URL(request.url).searchParams.get("range");
+    const range = isChartRange(rangeParam) ? rangeParam : "1W";
+    const now = Math.floor(Date.now() / 1_000);
+
+    if (isDemoMode()) {
+      const detail = demoDetail(symbol, range, now);
+      if (detail === null) return error("Unknown market.", 404, "not_found");
+      return json({ environment: environmentInfo(), market: detail });
     }
+    if (!rateLimit(`market:${symbol}:${clientIp(request)}`, 60)) {
+      return error("Too many market requests.", 429, "rate_limited");
+    }
+
+    const asset = demoAsset(symbol);
+    if (asset === null) return error("Unknown market.", 404, "not_found");
+    const env = loadEnvironment();
+    const settings = env.manifest.assets[symbol];
+    if (settings === undefined) return error("Asset is not configured.", 404, "not_found");
+    const db = appDatabase(env.databaseUrl);
+    const client = createChainClient(env);
+    const [observation, chainSettings, paused] = await Promise.all([
+      new DrizzleObservationStore(db.db).latestValidObservation(symbol),
+      client.readContract({
+        address: exchangeAddress(env),
+        abi: EXCHANGE_VIEWS_ABI,
+        functionName: "assetSettings",
+        args: [settings.address],
+      }),
+      client.readContract({
+        address: exchangeAddress(env),
+        abi: EXCHANGE_VIEWS_ABI,
+        functionName: "paused",
+      }),
+    ]);
+    const [listed, stockDecimals, maxSourceAgeSeconds] = chainSettings;
+    if (!listed) return error("Asset is not listed.", 404, "not_found");
     const price =
       observation?.referencePriceUsdcPerWholeToken === null ||
       observation?.referencePriceUsdcPerWholeToken === undefined
         ? null
         : observation.referencePriceUsdcPerWholeToken;
-    const maxAge = settings.maxSourceAgeSeconds ?? 3_600;
+    const maxAge = maxSourceAgeSeconds > 0 ? maxSourceAgeSeconds : settings.maxSourceAgeSeconds;
     const fresh =
       observation !== null &&
-      observation !== undefined &&
-      now - observation.sourceUpdatedAt <= maxAge;
-    const client = createChainClient(env);
-    const paused = await client
-      .readContract({
-        address: env.manifest.contracts["KyroxExchange"]?.address as `0x${string}`,
-        abi: EXCHANGE_VIEWS_ABI,
-        functionName: "paused",
-      })
-      .catch(() => true);
-    return NextResponse.json({
-      environment: { ...environmentInfo(), simulated: env.mode === "local-anvil" },
+      observation.sourceUpdatedAt <= now &&
+      isObservationFresh(now, observation.sourceUpdatedAt, maxAge);
+    return json({
+      environment: environmentInfo(env),
       market: {
-        asset,
+        asset: { ...asset, decimals: stockDecimals },
         symbol,
         priceUsdc: price === null ? null : fromBaseUnits(price, 6),
         change24hPct: null,
@@ -67,7 +74,9 @@ export async function GET(request: Request, context: { params: Promise<{ symbol:
         sourceUpdatedAt: observation?.sourceUpdatedAt ?? null,
         observedAt: observation?.observedAt ?? null,
         fresh,
-        simulated: env.mode === "local-anvil",
+        simulated:
+          env.mode === "local-anvil" ||
+          observation?.feedAddress === "0x0000000000000000000000000000000000000000",
         history: [],
         range,
         highRangeUsdc: null,
@@ -76,7 +85,7 @@ export async function GET(request: Request, context: { params: Promise<{ symbol:
         paused,
       },
     });
-  } finally {
-    await db.pool.end();
+  } catch (err) {
+    return routeError(err, "market_unavailable");
   }
 }

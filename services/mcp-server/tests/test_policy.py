@@ -263,8 +263,18 @@ def test_4_ttsla_with_100_tokens_is_denied() -> None:
 
 
 def test_5_tnvda_with_10_tokens_passes() -> None:
-    """Requirement 5: tNVDA with 10 tokens passes (along with all 3 approved tickers)."""
-    for approved_ticker in ("tNVDA", "tAAPL", "tTSLA", "tnvda", "  tTSLA  "):
+    """Requirement 5: tNVDA with 10 tokens passes (along with all 7 approved tickers)."""
+    for approved_ticker in (
+        "tNVDA",
+        "tAAPL",
+        "tMSFT",
+        "tGOOGL",
+        "tAMZN",
+        "tTSLA",
+        "tMETA",
+        "tnvda",
+        "  tTSLA  ",
+    ):
         decision = evaluate_transaction_policy(ticker=approved_ticker, amount=10)
         assert decision.allowed is True
         assert decision.passed is True
@@ -275,16 +285,19 @@ def test_5_tnvda_with_10_tokens_passes() -> None:
 
 @pytest.mark.parametrize(
     "unknown_ticker",
-    ["UNKNOWN", "AAPL", "TSLA", "NVDA", "tMSFT", "tGOOG", "tAMZN", "BTC", "ETH", "   ", ""],
+    ["UNKNOWN", "AAPL", "TSLA", "NVDA", "MSFT", "GOOGL", "AMZN", "META", "BTC", "ETH", "   ", ""],
 )
 def test_6_unknown_ticker_is_denied_and_config_cannot_expand_allowlist(
     unknown_ticker: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Requirement 6: Unknown ticker is denied; strict case & config bounds verified."""
-    assert CANONICAL_APPROVED_TICKERS == ("tAAPL", "tTSLA", "tNVDA")
-    assert get_approved_tickers_canonical() == ("tAAPL", "tTSLA", "tNVDA")
-    assert get_approved_tickers() == frozenset({"taapl", "ttsla", "tnvda"})
+    expected_tickers = ("tAAPL", "tNVDA", "tMSFT", "tGOOGL", "tAMZN", "tTSLA", "tMETA")
+    assert CANONICAL_APPROVED_TICKERS == expected_tickers
+    assert get_approved_tickers_canonical() == expected_tickers
+    assert get_approved_tickers() == frozenset(
+        {"taapl", "tnvda", "tmsft", "tgoogl", "tamzn", "ttsla", "tmeta"}
+    )
 
     decision = evaluate_transaction_policy(ticker=unknown_ticker, amount=10)
     assert decision.allowed is False
@@ -303,8 +316,8 @@ def test_6_unknown_ticker_is_denied_and_config_cannot_expand_allowlist(
     )
     assert strict_ok.allowed is True
 
-    # Environment variable KYROX_APPROVED_TICKERS cannot expand allowlist beyond tAAPL, tTSLA, tNVDA
-    monkeypatch.setenv("KYROX_APPROVED_TICKERS", "tAAPL,tMSFT")
+    # Environment variable KYROX_APPROVED_TICKERS cannot expand allowlist beyond the seven canonical tickers
+    monkeypatch.setenv("KYROX_APPROVED_TICKERS", "tAAPL,tDOGE")
     with pytest.raises(ConfigurationError, match="not in the approved Day 11 ticker allowlist"):
         get_approved_tickers()
     decision_bad_cfg = evaluate_transaction_policy(ticker="tAAPL", amount=10)
@@ -596,12 +609,12 @@ def test_19_unknown_tickers_and_arbitrary_dataset_entries_rejected_by_both_tools
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Requirement 19: Unknown tickers (even if added to dataset) are rejected by both tools before RPC."""
-    # Inject an arbitrary extra ticker 'tMSFT' with a valid contract address into the dataset
+    # Inject an arbitrary extra ticker 'tDOGE' with a valid contract address into the dataset
     expanded_dataset = [
         *MOCK_CONFIGURED_STOCKS,
         {
-            "ticker": "tMSFT",
-            "stock": "Test Microsoft",
+            "ticker": "tDOGE",
+            "stock": "Test Dogecoin",
             "reference_value": 420.0,
             "decimals": 18,
             "token_address": MOCK_EXTRA_ADDRESS,
@@ -612,7 +625,7 @@ def test_19_unknown_tickers_and_arbitrary_dataset_entries_rejected_by_both_tools
     monkeypatch.setattr(tx_module, "get_web3", get_web3_spy)
     monkeypatch.setattr(tx_module, "load_stocks", lambda: expanded_dataset)
 
-    for bad_ticker in ("UNKNOWN", "AAPL", "tMSFT", "BTC"):
+    for bad_ticker in ("UNKNOWN", "AAPL", "tDOGE", "BTC"):
         res_prep = server.prepare_transaction(
             from_wallet=SAMPLE_SENDER_CHECKSUM,
             ticker=bad_ticker,
@@ -970,7 +983,7 @@ def test_25_26_intent_integrity_and_unsigned_transaction_behavior_unchanged(
     assert verify_prepared_transaction_intent(prepared)["intent_hash"] == prepared["intent_hash"]
 
     tampered_ticker = json.loads(json.dumps(prepared))
-    tampered_ticker["ticker"] = "tMSFT"
+    tampered_ticker["ticker"] = "tDOGE"
     with pytest.raises(PolicyViolationError):
         verify_prepared_transaction_intent(tampered_ticker)
 

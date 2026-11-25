@@ -101,8 +101,8 @@ export interface PublicationTransition {
 export const ALLOWED_PUBLICATION_TRANSITIONS: Readonly<
   Record<PublicationStatus, readonly PublicationStatus[]>
 > = {
-  prepared: ["submitted", "included", "verified", "failed", "verification_failed"],
-  submitted: ["included", "verified", "failed", "verification_failed"],
+  prepared: ["submitted", "included", "verified", "failed", "verification_failed", "reorged"],
+  submitted: ["included", "verified", "failed", "verification_failed", "reorged"],
   included: ["confirmed", "verified", "failed", "verification_failed", "reorged"],
   confirmed: ["verified", "failed", "reorged"],
   verified: ["reorged"],
@@ -118,7 +118,10 @@ export class PublicationTransitionError extends Error {
 export interface ObservationStore {
   insertObservation(record: ObservationInsert): Promise<"inserted" | "duplicate">;
   recordEvent(event: IngestionEvent): Promise<void>;
-  latestValidObservation(assetSymbol: string): Promise<ObservationInsert | null>;
+  latestValidObservation(
+    assetSymbol: string,
+    expectedFeedAddress?: Address,
+  ): Promise<ObservationInsert | null>;
   isPublished(assetSymbol: string, sourceRoundId: bigint): Promise<boolean>;
   latestPublishedRoundId(assetSymbol: string): Promise<bigint | null>;
   recordPublication(record: PublicationRecord): Promise<"inserted" | "duplicate">;
@@ -153,11 +156,29 @@ export class InMemoryObservationStore implements ObservationStore {
     this.events.push(event);
   }
 
-  async latestValidObservation(assetSymbol: string): Promise<ObservationInsert | null> {
-    const valid = this.observations.filter(
-      (record) => record.assetSymbol === assetSymbol && record.status === "valid",
-    );
-    return valid.length > 0 ? (valid[valid.length - 1] as ObservationInsert) : null;
+  async latestValidObservation(
+    assetSymbol: string,
+    expectedFeedAddress?: Address,
+  ): Promise<ObservationInsert | null> {
+    const valid = this.observations
+      .map((record, id) => ({ record, id }))
+      .filter(
+        ({ record }) =>
+          record.assetSymbol === assetSymbol &&
+          record.status === "valid" &&
+          (expectedFeedAddress === undefined ||
+            record.feedAddress.toLowerCase() === expectedFeedAddress.toLowerCase()),
+      )
+      .sort((a, b) => {
+        if (a.record.sourceUpdatedAt !== b.record.sourceUpdatedAt) {
+          return b.record.sourceUpdatedAt - a.record.sourceUpdatedAt;
+        }
+        if (a.record.sourceRoundId !== b.record.sourceRoundId) {
+          return a.record.sourceRoundId > b.record.sourceRoundId ? -1 : 1;
+        }
+        return b.id - a.id;
+      });
+    return valid[0]?.record ?? null;
   }
 
   async isPublished(assetSymbol: string, sourceRoundId: bigint): Promise<boolean> {

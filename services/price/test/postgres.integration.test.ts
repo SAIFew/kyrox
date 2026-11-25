@@ -93,6 +93,30 @@ describe.skipIf(!enabled)("PostgreSQL observation store", () => {
     }
   });
 
+  it("orders by canonical source timestamp/round/id and never regresses on late ingestion", async () => {
+    await store.insertObservation(record);
+    await store.insertObservation({ ...record, sourceRoundId: 101n, rawAnswer: 34_600_000_000n });
+    await store.insertObservation({
+      ...record,
+      sourceRoundId: 102n,
+      sourceUpdatedAt: record.sourceUpdatedAt - 60,
+      observedAt: record.observedAt + 60,
+    });
+    expect((await store.latestValidObservation("tAAPL"))?.sourceRoundId).toBe(101n);
+
+    const otherFeed = "0x1111111111111111111111111111111111111111" as const;
+    await store.insertObservation({
+      ...record,
+      feedAddress: otherFeed,
+      sourceRoundId: 200n,
+      sourceUpdatedAt: record.sourceUpdatedAt + 1,
+    });
+    expect((await store.latestValidObservation("tAAPL"))?.sourceRoundId).toBe(200n);
+    expect((await store.latestValidObservation("tAAPL", record.feedAddress))?.sourceRoundId).toBe(
+      101n,
+    );
+  });
+
   it("never overwrites a valid observation with an invalid one for the same round", async () => {
     await store.insertObservation(record);
     expect(

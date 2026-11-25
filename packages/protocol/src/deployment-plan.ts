@@ -64,6 +64,7 @@ export interface ProposedDeploymentManifest {
     readonly constructorArgs: readonly unknown[];
     readonly dependencies: readonly string[];
     readonly estimatedGas: string | null;
+    readonly estimatedGasNote?: string;
     readonly postDeployment: readonly string[];
   }[];
   readonly assets: readonly {
@@ -92,6 +93,7 @@ export interface DeploymentPlan {
   readonly steps: readonly DeploymentStep[];
   readonly roleGrants: readonly string[];
   readonly assetConfiguration: readonly string[];
+  readonly gasEstimateFailures: Readonly<Record<string, string>>;
   readonly warnings: readonly string[];
   readonly manifest: ProposedDeploymentManifest;
 }
@@ -103,10 +105,28 @@ export interface DeploymentPlanInput {
   readonly createdAt: string;
   /** Optional safe estimates keyed by step name; null when unavailable. */
   readonly gasEstimates?: Readonly<Record<string, string | null>>;
+  /** Human-readable failures retained instead of silently discarding estimates. */
+  readonly gasEstimateFailures?: Readonly<Record<string, string>>;
 }
 
 export class DeploymentPlanError extends Error {
   override readonly name = "DeploymentPlanError";
+}
+
+function safeGasEstimate(value: string | null | undefined, name: string): string | null {
+  if (value === undefined || value === null) return null;
+  if (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value))) {
+    throw new DeploymentPlanError(`${name} has an invalid gas estimate.`);
+  }
+  return value;
+}
+
+function gasFailureNote(
+  failures: Readonly<Record<string, string>> | undefined,
+  name: string,
+): { readonly estimatedGasNote?: string } {
+  const note = failures?.[name];
+  return note === undefined ? {} : { estimatedGasNote: note };
 }
 
 const PROPOSAL_WARNING =
@@ -152,7 +172,8 @@ export function buildDeploymentPlan(input: DeploymentPlanInput): DeploymentPlan 
         optimizerRuns: usdc.optimizerRuns,
         evmVersion: usdc.evmVersion,
       },
-      estimatedGas: input.gasEstimates?.["TestUSDC"] ?? null,
+      estimatedGas: safeGasEstimate(input.gasEstimates?.["TestUSDC"], "TestUSDC"),
+      ...gasFailureNote(input.gasEstimateFailures, "TestUSDC"),
       postDeployment: [],
     },
     ...input.assets.map((asset) => ({
@@ -167,16 +188,18 @@ export function buildDeploymentPlan(input: DeploymentPlanInput): DeploymentPlan 
         optimizerRuns: stock.optimizerRuns,
         evmVersion: stock.evmVersion,
       },
-      estimatedGas: null,
-      postDeployment: [
-        `exchange.listAsset({{${asset.symbol}}}, ${asset.maxSourceAgeSeconds}, ${asset.minPriceUsdcPerWholeToken}, ${asset.maxPriceUsdcPerWholeToken})`,
-      ],
+      estimatedGas: safeGasEstimate(
+        input.gasEstimates?.[`TestStock:${asset.symbol}`],
+        `TestStock:${asset.symbol}`,
+      ),
+      ...gasFailureNote(input.gasEstimateFailures, `TestStock:${asset.symbol}`),
+      postDeployment: [],
     })),
     {
       contractName: "KyroxExchange",
       address: null,
       constructorArgs: ["{{TestUSDC}}", input.roles.admin],
-      dependencies: ["TestUSDC"],
+      dependencies: ["TestUSDC", ...input.assets.map((asset) => `TestStock:${asset.symbol}`)],
       bytecodeHash: exchange.bytecodeHash,
       compiler: {
         compilerVersion: exchange.compilerVersion,
@@ -184,8 +207,9 @@ export function buildDeploymentPlan(input: DeploymentPlanInput): DeploymentPlan 
         optimizerRuns: exchange.optimizerRuns,
         evmVersion: exchange.evmVersion,
       },
-      estimatedGas: input.gasEstimates?.["KyroxExchange"] ?? null,
-      estimatedGasNote: "Depends on the deployed TestUSDC address.",
+      estimatedGas: safeGasEstimate(input.gasEstimates?.["KyroxExchange"], "KyroxExchange"),
+      estimatedGasNote:
+        input.gasEstimateFailures?.["KyroxExchange"] ?? "Depends on the deployed TestUSDC address.",
       postDeployment: [
         "TestUSDC.grantRole(EXCHANGE_ROLE, {{KyroxExchange}})",
         ...input.assets.map(
@@ -193,6 +217,10 @@ export function buildDeploymentPlan(input: DeploymentPlanInput): DeploymentPlan 
         ),
         `KyroxExchange.grantRole(PRICE_UPDATER_ROLE, ${input.roles.priceUpdater})`,
         `KyroxExchange.grantRole(PAUSER_ROLE, ${input.roles.pauser})`,
+        ...input.assets.map(
+          (asset) =>
+            `KyroxExchange.listAsset({{TestStock:${asset.symbol}}}, ${asset.maxSourceAgeSeconds}, ${asset.minPriceUsdcPerWholeToken}, ${asset.maxPriceUsdcPerWholeToken}); KyroxExchange.setPriceBounds({{TestStock:${asset.symbol}}}, ${asset.minPriceUsdcPerWholeToken}, ${asset.maxPriceUsdcPerWholeToken}, ${asset.maxPriceDeviationBps})`,
+        ),
       ],
     },
   ];
@@ -221,10 +249,13 @@ export function buildDeploymentPlan(input: DeploymentPlanInput): DeploymentPlan 
 
   const assetConfiguration = input.assets.map(
     (asset) =>
-      `listAsset({{${asset.symbol}}}, maxSourceAge=${asset.maxSourceAgeSeconds}, minPrice=${asset.minPriceUsdcPerWholeToken}, maxPrice=${asset.maxPriceUsdcPerWholeToken}); setPriceBounds(..., deviation=${asset.maxPriceDeviationBps}bps)`,
+      `KyroxExchange.listAsset({{TestStock:${asset.symbol}}}, maxSourceAge=${asset.maxSourceAgeSeconds}, minPrice=${asset.minPriceUsdcPerWholeToken}, maxPrice=${asset.maxPriceUsdcPerWholeToken}); KyroxExchange.setPriceBounds({{TestStock:${asset.symbol}}}, ${asset.minPriceUsdcPerWholeToken}, ${asset.maxPriceUsdcPerWholeToken}, deviation=${asset.maxPriceDeviationBps}bps)`,
   );
 
-  const warnings: string[] = [];
+  const gasEstimateFailures = { ...(input.gasEstimateFailures ?? {}) };
+  const warnings: string[] = Object.entries(gasEstimateFailures).map(
+    ([name, reason]) => `Gas estimate unavailable for ${name}: ${reason}`,
+  );
   if (input.roles.priceUpdater.toLowerCase() === input.roles.admin.toLowerCase()) {
     warnings.push("Admin and price updater are the same key; separate keys are recommended.");
   }
@@ -253,6 +284,7 @@ export function buildDeploymentPlan(input: DeploymentPlanInput): DeploymentPlan 
       constructorArgs: step.constructorArgs,
       dependencies: step.dependencies,
       estimatedGas: step.estimatedGas,
+      ...(step.estimatedGasNote !== undefined ? { estimatedGasNote: step.estimatedGasNote } : {}),
       postDeployment: step.postDeployment,
     })),
     assets: input.assets.map((asset) => ({
@@ -281,6 +313,7 @@ export function buildDeploymentPlan(input: DeploymentPlanInput): DeploymentPlan 
     steps,
     roleGrants,
     assetConfiguration,
+    gasEstimateFailures,
     warnings,
     manifest,
   };

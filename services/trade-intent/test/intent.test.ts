@@ -47,6 +47,16 @@ const observation: PriceObservation = {
   sourceKind: "chainlink-coinbase",
 };
 
+const canonical = {
+  priceUsdcPerWholeToken: observation.priceUsdcPerWholeToken,
+  sourceRoundId: observation.sourceRoundId,
+  sourceUpdatedAt: observation.sourceUpdatedAt,
+  publishedAt: NOW,
+  sourceChainId: observation.sourceChainId,
+  feedAddress: FEED,
+  simulated: false,
+};
+
 const freshnessConfig: AssetFreshnessConfig = {
   assetSymbol: "tAAPL",
   maxSourceAgeSeconds: 60,
@@ -74,10 +84,11 @@ const quote = createQuote(request, asset, observation, {
   quoteTtlSeconds: 60,
 });
 
-function reader(chainId = 84_532, decimals = 18): SepoliaTokenReader {
+function reader(chainId = 84_532, decimals = 18, published = canonical): SepoliaTokenReader {
   return {
     getChainId: async () => chainId,
     getTokenDecimals: async () => decimals,
+    readObservation: async () => published,
   };
 }
 
@@ -177,6 +188,23 @@ describe("prepareTradeIntent", () => {
     ).rejects.toMatchObject({ code: "WRONG_CHAIN" });
   });
 
+  it("rejects any divergence from the canonical published observation", async () => {
+    const divergences = [
+      { ...canonical, priceUsdcPerWholeToken: 231_000_000n },
+      { ...canonical, sourceRoundId: 43n },
+      { ...canonical, sourceUpdatedAt: NOW - 6 },
+      { ...canonical, sourceChainId: 84_532 },
+      { ...canonical, feedAddress: OTHER_TOKEN },
+      { ...canonical, simulated: true },
+      { ...canonical, publishedAt: NOW + 1 },
+    ];
+    for (const published of divergences) {
+      await expect(
+        prepareTradeIntent(params({ reader: reader(84_532, 18, published) })),
+      ).rejects.toMatchObject({ code: "QUOTE_MISMATCH" });
+    }
+  });
+
   it("rejects expired quotes and bad deadlines", async () => {
     const expiredAt = quote.expiresAt;
     await expect(
@@ -211,7 +239,12 @@ describe("prepareTradeIntent", () => {
 
   it("rejects a stale observation instead of trusting the quote", async () => {
     await expect(
-      prepareTradeIntent(params({ observation: { ...observation, sourceUpdatedAt: NOW - 120 } })),
+      prepareTradeIntent(
+        params({
+          observation: { ...observation, sourceUpdatedAt: NOW - 120 },
+          reader: reader(84_532, 18, { ...canonical, sourceUpdatedAt: NOW - 120 }),
+        }),
+      ),
     ).rejects.toMatchObject({ code: "STALE_OBSERVATION" });
   });
 

@@ -21,6 +21,17 @@ const manifest = parseDeploymentManifest({
   chain: "base-sepolia",
   status: "test",
   contracts: { KyroxExchange: { address: EXCHANGE, verified: true } },
+  assets: { tAAPL: { address: TOKEN, verified: true } },
+});
+
+const localManifest = parseDeploymentManifest({
+  chainId: 84_532,
+  chain: "base-sepolia",
+  environment: "local-anvil",
+  status: "local-anvil",
+  rpc: { url: "http://127.0.0.1:8545" },
+  contracts: { KyroxExchange: { address: EXCHANGE } },
+  assets: { tAAPL: { address: TOKEN } },
 });
 
 const observation: ObservationInsert = {
@@ -114,6 +125,17 @@ describe("prepareSetPricePublication", () => {
         lastPublishedRoundId: observation.sourceRoundId,
       }),
     ).rejects.toMatchObject({ code: "DUPLICATE_ROUND" });
+  });
+
+  it("binds the publication token to the approved manifest asset", async () => {
+    await expect(
+      prepareSetPricePublication({
+        observation,
+        stockToken: "0x3333333333333333333333333333333333333333",
+        manifest,
+        nowSeconds: NOW,
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_TOKEN" });
   });
 
   it("rejects a non-Sepolia source chain", async () => {
@@ -226,7 +248,7 @@ describe("prepareSetPricePublication", () => {
     const prepared = await prepareSetPricePublication({
       observation: zeroFeedObservation,
       stockToken: TOKEN,
-      manifest,
+      manifest: localManifest,
       nowSeconds: NOW,
       simulated: true,
     });
@@ -238,6 +260,16 @@ describe("prepareSetPricePublication", () => {
     await expect(
       prepareSetPricePublication({
         observation,
+        stockToken: TOKEN,
+        manifest,
+        nowSeconds: NOW,
+        simulated: true,
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_PROVENANCE" });
+
+    await expect(
+      prepareSetPricePublication({
+        observation: zeroFeedObservation,
         stockToken: TOKEN,
         manifest,
         nowSeconds: NOW,

@@ -1,15 +1,26 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
-import { createPublicClient, http, keccak256, toHex } from "viem";
+import { keccak256, toHex } from "viem";
 
 import {
+  buildPendingDeploymentRecord,
   createViemChainIdentityProvider,
   promotePendingManifest,
+  validatePendingRecord,
   verifyChainIdentity,
+  verifyDeployment,
+  type DeploymentEvidence,
   type ManifestIo,
   type PendingDeploymentRecord,
+  type ProposedDeploymentManifest,
 } from "@kyrox/protocol";
+
+import {
+  clientFor,
+  loadArtifact,
+  parseDeploymentConfirmations,
+} from "./verify-sepolia-deployment.js";
 
 const PENDING_PATH = "deployments/base-sepolia.verified-pending.json";
 const PROPOSAL_PATH = "deployments/base-sepolia.proposed.json";
@@ -33,51 +44,83 @@ async function main(argv: readonly string[]): Promise<number> {
         "BASE_SEPOLIA_RPC_URL and BASE_SEPOLIA_RPC_URL_SECONDARY must be set and distinct.",
       );
     }
-    await verifyChainIdentity([
+    const requiredConfirmations = parseDeploymentConfirmations(
+      process.env["DEPLOYMENT_CONFIRMATIONS"],
+    );
+
+    const pending = JSON.parse(readFileSync(PENDING_PATH, "utf8")) as PendingDeploymentRecord;
+    validatePendingRecord(pending);
+    const proposalRaw = readFileSync(PROPOSAL_PATH, "utf8");
+    const proposal = JSON.parse(proposalRaw) as ProposedDeploymentManifest;
+    const proposalHash = keccak256(toHex(proposalRaw));
+    if (pending.proposalHash.toLowerCase() !== proposalHash.toLowerCase()) {
+      throw new Error("Pending record is not bound to the current reviewed proposal.");
+    }
+
+    const chainIdentity = await verifyChainIdentity([
       createViemChainIdentityProvider("primary", rpcUrl),
       createViemChainIdentityProvider("secondary", secondaryUrl),
     ]);
+    const evidence: DeploymentEvidence = {
+      environment: "base-sepolia",
+      chainId: 84_532,
+      proposalHash: pending.proposalHash,
+      roles: pending.roles,
+      contracts: Object.fromEntries(
+        Object.entries(pending.contracts).map(([name, contract]) => [
+          name,
+          { address: contract.address, transactionHash: contract.transactionHash },
+        ]),
+      ),
+    };
 
-    const pending = JSON.parse(readFileSync(PENDING_PATH, "utf8")) as PendingDeploymentRecord;
-    const client = createPublicClient({
-      chain: {
-        id: 84_532,
-        name: "Base Sepolia",
-        nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-        rpcUrls: { default: { http: [rpcUrl] } },
+    // Reperform the complete verification immediately before promotion. This
+    // covers receipts, bytecode, role history, pause state, settlement linkage,
+    // asset settings and historical constructor supply on both independent RPCs.
+    const verification = await verifyDeployment({
+      evidence,
+      proposal,
+      artifacts: {
+        TestUSDC: loadArtifact("TestUSDC"),
+        TestStock: loadArtifact("TestStock"),
+        KyroxExchange: loadArtifact("KyroxExchange"),
       },
-      transport: http(rpcUrl, { timeout: 20_000, retryCount: 1 }),
+      rpc: clientFor(rpcUrl),
+      secondaryRpc: clientFor(secondaryUrl),
+      expectedProposalHash: proposalHash,
+      chainIdentity,
+      minConfirmations: requiredConfirmations,
     });
-    const requiredConfirmations = Number(process.env["DEPLOYMENT_CONFIRMATIONS"] ?? "12");
-    const latest = await client.getBlockNumber();
+    if (!verification.ok) {
+      throw new Error(`Fresh deployment verification failed: ${verification.failures.join("; ")}`);
+    }
+
     for (const [name, contract] of Object.entries(pending.contracts)) {
-      const receipt = await client.getTransactionReceipt({
-        hash: contract.transactionHash as `0x${string}`,
-      });
+      const fresh = verification.contracts[name];
+      if (fresh === undefined) throw new Error(`${name}: fresh verification produced no evidence.`);
       if (
-        receipt.status !== "success" ||
-        receipt.contractAddress?.toLowerCase() !== contract.address.toLowerCase() ||
-        receipt.blockNumber.toString() !== contract.blockNumber ||
-        receipt.blockHash.toLowerCase() !== contract.blockHash.toLowerCase()
+        fresh.address.toLowerCase() !== contract.address.toLowerCase() ||
+        fresh.runtimeBytecodeHash.toLowerCase() !== contract.runtimeBytecodeHash.toLowerCase() ||
+        fresh.blockNumber !== contract.blockNumber ||
+        fresh.blockHash.toLowerCase() !== contract.blockHash.toLowerCase()
       ) {
-        throw new Error(`${name}: deployment receipt no longer matches verified evidence.`);
-      }
-      const confirmations = Number(latest - receipt.blockNumber) + 1;
-      if (confirmations < requiredConfirmations) {
-        throw new Error(
-          `${name}: only ${confirmations} confirmations, need ${requiredConfirmations}.`,
-        );
-      }
-      const code = await client.getCode({ address: contract.address });
-      if (code === undefined || code === "0x") {
-        throw new Error(`${name}: no code at the verified address.`);
+        throw new Error(`${name}: current deployment no longer matches pending verified evidence.`);
       }
     }
-    const proposalRaw = readFileSync(PROPOSAL_PATH, "utf8");
-    const proposalHash = keccak256(toHex(proposalRaw));
+
+    const refreshed = buildPendingDeploymentRecord({
+      proposal,
+      proposalHash,
+      evidence,
+      verification,
+      createdAt: pending.createdAt,
+    });
+    if (refreshed.integrityHash.toLowerCase() !== pending.integrityHash.toLowerCase()) {
+      throw new Error("Pending record changed after its original verification.");
+    }
 
     const result = promotePendingManifest({
-      record: pending,
+      record: refreshed,
       expectedProposalHash: proposalHash,
       targetPath: TARGET_PATH,
       confirmed,

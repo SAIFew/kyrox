@@ -19,6 +19,7 @@ export default tseslint.config(
       "packages/contracts/broadcast/**",
       "pnpm-lock.yaml",
       "content/**",
+      "video/**",
       "services/mcp-server/**",
     ],
   },

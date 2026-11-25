@@ -73,6 +73,15 @@ export interface PortfolioPosition {
   readonly change24hUsdc: string | null;
   readonly stale: boolean;
   readonly simulated: boolean;
+  /**
+   * Simulated cost basis from the demo ledger. Live environments omit these
+   * until a durable, reconciled cost-basis indexer exists; the UI must show
+   * "unavailable" rather than infer a value.
+   */
+  readonly avgCostUsdc?: string | null;
+  readonly costBasisUsdc?: string | null;
+  readonly unrealizedPnlUsdc?: string | null;
+  readonly unrealizedPnlPct?: number | null;
 }
 
 export interface PortfolioPayload {
@@ -115,6 +124,9 @@ export interface EnvironmentInfo {
   readonly simulated: boolean;
   readonly chainId: number;
   readonly chainName: string;
+  /** Public, credential-free RPC suitable for wallet chain switching. */
+  readonly walletRpcUrl: string | null;
+  readonly walletNetworkName: string;
   /** Human-readable status of the on-chain deployment. */
   readonly contracts: "not-deployed" | "local" | "deployed";
   readonly pricePublication: "simulated" | "configured";
@@ -142,6 +154,8 @@ export interface QuotePayload {
   readonly minAmountOutLabel: string;
   readonly sourceUpdatedAt: number;
   readonly expiresAt: number;
+  /** Server-controlled quote lifetime in seconds. */
+  readonly ttlSeconds: number;
   readonly simulated: boolean;
   readonly simulatedPrice: boolean;
   readonly limits: {

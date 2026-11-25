@@ -1,20 +1,18 @@
-import { createDatabase } from "@kyrox/db";
 import { DrizzleObservationStore } from "@kyrox/price";
 
+import { appDatabase } from "./database.js";
 import { DrizzleAuthStore, DrizzleIntentStore } from "./stores.js";
 import { loadEnvironment, type RuntimeEnvironment } from "./env.js";
 
 let currentEnv: RuntimeEnvironment | undefined;
-let currentDb: ReturnType<typeof createDatabase> | undefined;
 
 export function environment(): RuntimeEnvironment {
   if (currentEnv === undefined) currentEnv = loadEnvironment();
   return currentEnv;
 }
 
-function database(): ReturnType<typeof createDatabase> {
-  if (currentDb === undefined) currentDb = createDatabase(environment().databaseUrl);
-  return currentDb;
+function database() {
+  return appDatabase(environment().databaseUrl);
 }
 
 export function authStore(): DrizzleAuthStore {

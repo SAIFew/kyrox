@@ -1,6 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import {
+  DevelopersDataBadge,
+  DevelopersEnvironmentMeta,
+  DevelopersEnvironmentNote,
+} from "../../components/environment-labels";
 import { CopyButton, McpPlayground } from "../../components/mcp-playground";
 import {
   ArrowUpRight,
@@ -52,10 +57,7 @@ export default function DevelopersPage() {
             transfer.
           </p>
         </div>
-        <div className="page-head-meta">
-          <span className="sim-badge live">bridge online</span>
-          <span className="muted small">MCP 2025-06-18 · Streamable HTTP</span>
-        </div>
+        <DevelopersEnvironmentMeta />
       </header>
 
       <div className="dev-grid">
@@ -158,10 +160,11 @@ export default function DevelopersPage() {
           <div>
             <h2>Try the bridge</h2>
             <p className="muted small">
-              Calls the same JSON-RPC endpoint an agent would use. Responses are live preview data.
+              Calls the same JSON-RPC endpoint an agent would use. Responses reflect the current
+              environment and retain per-observation simulation flags.
             </p>
           </div>
-          <span className="sim-badge">simulated data</span>
+          <DevelopersDataBadge />
         </div>
         <McpPlayground />
       </section>
@@ -223,8 +226,7 @@ kyrox-mcp`}</code>
       <div className="callout">
         <InfoIcon size={16} />
         <p>
-          <SparkIcon size={13} /> Preview limitation: market data is simulated and no Base Sepolia
-          contracts are deployed. The bridge is functional, but the economics are not live.
+          <SparkIcon size={13} /> <DevelopersEnvironmentNote />
         </p>
       </div>
 

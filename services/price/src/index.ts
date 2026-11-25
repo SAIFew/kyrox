@@ -10,6 +10,13 @@ export type { SepoliaChainReader } from "./feeds/viem-client.js";
 export { MAX_REFERENCE_PRICE, USDC_DECIMALS, normalizeChainlinkAnswer } from "./normalize.js";
 
 export {
+  ObservationProvenanceError,
+  assertObservationProvenance,
+  validateStoredObservation,
+} from "./provenance.js";
+export type { ObservationProvenanceCode, ObservationProvenanceOptions } from "./provenance.js";
+
+export {
   BASE_SEQUENCER_DESCRIPTION,
   BASE_SEQUENCER_UPTIME_FEED,
   ChainlinkSequencerUptimeReader,

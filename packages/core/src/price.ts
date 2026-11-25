@@ -79,11 +79,14 @@ export function assertPriceObservation(
   observation: PriceObservation,
   nowSeconds: number,
 ): PriceObservation {
+  if (typeof observation.priceUsdcPerWholeToken !== "bigint") {
+    throw new CoreError("INVALID_PRICE", "Price must be a bigint in 6-decimal USDC base units.");
+  }
   if (observation.priceUsdcPerWholeToken <= 0n) {
     throw new CoreError("INVALID_PRICE", "Price must be a positive 6-decimal USDC amount.");
   }
-  if (observation.sourceRoundId <= 0n) {
-    throw new CoreError("INVALID_ROUND", "Source round id must be positive.");
+  if (typeof observation.sourceRoundId !== "bigint" || observation.sourceRoundId <= 0n) {
+    throw new CoreError("INVALID_ROUND", "Source round id must be a positive bigint.");
   }
   if (!Number.isInteger(observation.sourceUpdatedAt) || observation.sourceUpdatedAt <= 0) {
     throw new CoreError(
@@ -91,11 +94,26 @@ export function assertPriceObservation(
       "Source updatedAt must be a positive integer unix timestamp.",
     );
   }
+  if (!Number.isInteger(observation.observedAt) || observation.observedAt <= 0) {
+    throw new CoreError(
+      "INVALID_TIMESTAMP",
+      "ObservedAt must be a positive integer unix timestamp.",
+    );
+  }
+  if (!Number.isInteger(observation.sourceChainId) || observation.sourceChainId <= 0) {
+    throw new CoreError("INVALID_PRICE", "Source chain id must be a positive integer.");
+  }
   if (observation.sourceUpdatedAt > nowSeconds) {
     throw new CoreError(
       "FUTURE_TIMESTAMP",
       `Source updatedAt ${observation.sourceUpdatedAt} is later than current time ${nowSeconds}.`,
     );
+  }
+  if (observation.sourceKind !== "chainlink-coinbase" && observation.sourceKind !== "simulated") {
+    throw new CoreError("INVALID_PRICE", "Price observation has an unknown source kind.");
+  }
+  if (observation.feedAddress !== null && !/^0x[0-9a-fA-F]{40}$/.test(observation.feedAddress)) {
+    throw new CoreError("INVALID_PRICE", "Feed address is malformed.");
   }
   if (observation.feedAddress === null && observation.sourceKind === "chainlink-coinbase") {
     throw new CoreError(
@@ -103,7 +121,10 @@ export function assertPriceObservation(
       "A chainlink-coinbase observation must reference a feed address.",
     );
   }
-  if (observation.feedAddress !== null && observation.sourceKind === "simulated") {
+  if (
+    observation.feedAddress !== null &&
+    (/^0x0{40}$/i.test(observation.feedAddress) || observation.sourceKind === "simulated")
+  ) {
     throw new CoreError(
       "INVALID_PRICE",
       "A simulated observation must not reference a feed address.",
@@ -136,8 +157,14 @@ export function assessFreshness(
   if (!Number.isInteger(nowSeconds) || nowSeconds <= 0) {
     throw new CoreError("INVALID_TIMESTAMP", "Current time must be a positive integer timestamp.");
   }
-  if (config.maxSourceAgeSeconds <= 0) {
-    throw new CoreError("INVALID_TIMESTAMP", "maxSourceAgeSeconds must be positive.");
+  if (!Number.isInteger(config.maxSourceAgeSeconds) || config.maxSourceAgeSeconds <= 0) {
+    throw new CoreError("INVALID_TIMESTAMP", "maxSourceAgeSeconds must be a positive integer.");
+  }
+  if (typeof config.requireOpenMarket !== "boolean") {
+    throw new CoreError("QUOTE_MISMATCH", "requireOpenMarket must be a boolean.");
+  }
+  if (session !== "open" && session !== "closed" && session !== "unknown") {
+    throw new CoreError("QUOTE_MISMATCH", "Market session is invalid.");
   }
   if (config.assetSymbol !== observation.assetSymbol) {
     throw new CoreError(

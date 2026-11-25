@@ -11,8 +11,8 @@ Keep the packaged `data/stocks.json` fixture unchanged in version control (`toke
 ## Current Status (`v0.1` Mock & Base Sepolia Testnet)
 
 - **Environment:** Labelled mock fixtures (`mock`) and **Base Sepolia testnet (`chainId: 84532`)** only.
-- **Not Live Market Data:** Each `reference_value` in `data/stocks.json` (`230.0`, `250.0`, `140.0`) is a static development fixture (`valuation_basis: "mock_reference_value"`). It is **not** a live equity market quote, real-time feed, or executable price.
-- **Contract Addresses:** The `token_address` field for `tAAPL` ("Test Apple"), `tTSLA` ("Test Tesla"), and `tNVDA` ("Test Nvidia") in packaged `data/stocks.json` is kept permanently blank (`""`) in version control. Deployed Base Sepolia (`chainId: 84532`) mock token addresses are supplied locally via `KYROX_STOCKS_FILE` (`planning/deployments/stocks.local.json`) and are never committed to the repository. Blank `token_address` entries are cleanly skipped by `get_wallet_balances` and `get_portfolio`, and safely rejected (`MISSING_CONFIGURATION`) by `prepare_transaction` and `simulate_transaction`.
+- **Not Live Market Data:** Each `reference_value` in `data/stocks.json` (`230.0`, `140.0`, `415.0`, `180.0`, `200.0`, `250.0`, `520.0`) is a static development fixture (`valuation_basis: "mock_reference_value"`). It is **not** a live equity market quote, real-time feed, or executable price.
+- **Contract Addresses:** The `token_address` field for `tAAPL` ("Test Apple"), `tNVDA` ("Test NVIDIA"), `tMSFT` ("Test Microsoft"), `tGOOGL` ("Test Google"), `tAMZN` ("Test Amazon"), `tTSLA` ("Test Tesla"), and `tMETA` ("Test Meta") in packaged `data/stocks.json` is kept permanently blank (`""`) in version control. Deployed Base Sepolia (`chainId: 84532`) mock token addresses are supplied locally via `KYROX_STOCKS_FILE` (`planning/deployments/stocks.local.json`) and are never committed to the repository. Blank `token_address` entries are cleanly skipped by `get_wallet_balances` and `get_portfolio`, and safely rejected (`MISSING_CONFIGURATION`) by `prepare_transaction` and `simulate_transaction`.
 
 ## Record Schema & Validation Invariants
 

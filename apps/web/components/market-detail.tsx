@@ -3,45 +3,57 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-import type { ChartRange, MarketDetail } from "../lib/market-types";
+import type { ChartRange, EnvironmentInfo, MarketDetail } from "../lib/market-types";
 import { api } from "../lib/api";
+import {
+  assetDisplayName,
+  contractsLabel,
+  environmentDisclosure,
+  environmentShortLabel,
+  observationBadge,
+  priceSourceLabel,
+  settlementDisplayName,
+} from "../lib/presentation";
 import {
   formatCompact,
   formatPct,
   formatPrice,
   formatTokenAmount,
+  formatUtc,
+  pctDirectionLabel,
   pctTone,
   rangeLabel,
   timeAgo,
+  toNumber,
 } from "../lib/format";
 import { useAccount } from "./account-provider";
 import { PriceChart } from "./charts";
 import { AssetMark } from "./live-markets";
+import { MarketHoursBadge } from "./market-hours-badge";
 import { TradePanel } from "./trade-panel";
 import { ArrowUpRight, ChevronDown, InfoIcon, LayersIcon, ShieldIcon } from "./icons";
 
 const RANGES: ChartRange[] = ["1D", "1W", "1M", "3M"];
 
-function formatUtc(seconds: number): string {
-  return `${new Date(seconds * 1_000).toISOString().replace("T", " ").slice(0, 16)} UTC`;
-}
-
 export function MarketDetailView({ symbol }: { symbol: string }) {
   const [range, setRange] = useState<ChartRange>("1W");
   const [market, setMarket] = useState<MarketDetail | null>(null);
+  const [marketEnvironment, setMarketEnvironment] = useState<EnvironmentInfo | null>(null);
   const [error, setError] = useState("");
-  const { portfolio, session } = useAccount();
+  const { portfolio, session, environment: sessionEnvironment } = useAccount();
+  const environment = marketEnvironment ?? sessionEnvironment;
 
   useEffect(() => {
     let active = true;
     setMarket(null);
     const load = async () => {
       try {
-        const payload = await api<{ market: MarketDetail }>(
+        const payload = await api<{ market: MarketDetail; environment?: EnvironmentInfo }>(
           `/api/markets/${encodeURIComponent(symbol)}?range=${range}`,
         );
         if (active) {
           setMarket(payload.market);
+          setMarketEnvironment(payload.environment ?? null);
           setError("");
         }
       } catch (err) {
@@ -59,7 +71,9 @@ export function MarketDetailView({ symbol }: { symbol: string }) {
   if (error.length > 0) {
     return (
       <div className="page-width page-stack">
-        <div className="callout callout-danger">{error}</div>
+        <div className="callout callout-danger" role="alert" aria-live="assertive">
+          {error}
+        </div>
         <Link className="text-link" href="/markets">
           ← Back to markets
         </Link>
@@ -81,14 +95,18 @@ export function MarketDetailView({ symbol }: { symbol: string }) {
 
   const asset = market.asset;
   const position = portfolio?.positions.find((entry) => entry.symbol === symbol) ?? null;
-  const tone = pctTone(market.changeRangePct);
+  const change24h = toNumber(market.change24hPct);
+  const rangeChange = toNumber(market.changeRangePct);
+  const tone = pctTone(rangeChange);
+  const price = toNumber(market.priceUsdc);
+  const available = market.fresh && price !== null;
 
   return (
     <div className="page-width page-stack">
       <div className="breadcrumb">
         <Link href="/markets">Markets</Link>
         <ChevronDown size={13} className="breadcrumb-sep" />
-        <span>{asset.symbol}</span>
+        <span>{assetDisplayName(asset.symbol)}</span>
       </div>
 
       <header className="asset-head">
@@ -96,8 +114,10 @@ export function MarketDetailView({ symbol }: { symbol: string }) {
           <AssetMark asset={asset} size={52} />
           <div>
             <div className="asset-title">
-              <h1>{asset.symbol}</h1>
-              <span className="sim-badge">simulated</span>
+              <h1>{assetDisplayName(asset.symbol)}</h1>
+              <span className="sim-badge">{observationBadge(environment, market)}</span>
+              <MarketHoursBadge />
+              <span className="muted small">{environmentShortLabel(environment)}</span>
             </div>
             <p>
               {asset.name} <span className="dot-sep">·</span> {asset.sector}{" "}
@@ -108,13 +128,19 @@ export function MarketDetailView({ symbol }: { symbol: string }) {
         <div className="asset-price">
           <div>
             <span className="price-value">{formatPrice(market.priceUsdc)}</span>
-            <span className="price-unit">tUSDC</span>
+            <span className="price-unit">{settlementDisplayName()}</span>
           </div>
-          <span className={`change ${pctTone(market.change24hPct)}`}>
-            {formatPct(market.change24hPct)} · 24h
-          </span>
+          <span className={`change ${pctTone(change24h)}`}>{formatPct(change24h)} · 24h</span>
         </div>
       </header>
+
+      {!available && (
+        <div className="callout callout-warn" role="status">
+          {market.fresh
+            ? "Reference price unavailable. Trade estimates and quotes are disabled."
+            : "Reference price stale. Trade estimates and quotes are disabled until a fresh observation arrives."}
+        </div>
+      )}
 
       <div className="detail-grid">
         <section className="panel chart-panel">
@@ -122,14 +148,19 @@ export function MarketDetailView({ symbol }: { symbol: string }) {
             <div>
               <h2>Reference price</h2>
               <p className="muted small">
-                {rangeLabel(range)} · {market.changeRangePct >= 0 ? "up" : "down"}{" "}
-                {Math.abs(market.changeRangePct).toFixed(2)}% over the selected range
+                {rangeLabel(range)} ·{" "}
+                {rangeChange === null
+                  ? "change unavailable"
+                  : `${pctDirectionLabel(rangeChange)} ${formatPct(rangeChange)}`}{" "}
+                over the selected range
               </p>
             </div>
             <div className="segmented segmented-small" role="group" aria-label="Chart range">
               {RANGES.map((value) => (
                 <button
                   key={value}
+                  type="button"
+                  aria-pressed={range === value}
                   className={range === value ? "is-active" : ""}
                   onClick={() => setRange(value)}
                 >
@@ -158,11 +189,13 @@ export function MarketDetailView({ symbol }: { symbol: string }) {
             </div>
             <div>
               <span>24h volume</span>
-              <strong>{formatCompact(market.volume24hUsdc)} tUSDC</strong>
+              <strong>
+                {formatCompact(market.volume24hUsdc)} {settlementDisplayName()}
+              </strong>
             </div>
             <div>
               <span>Observation</span>
-              <strong>{timeAgo(market.sourceUpdatedAt)}</strong>
+              <strong>{available ? timeAgo(market.sourceUpdatedAt) : "stale / unavailable"}</strong>
             </div>
           </div>
         </section>
@@ -172,20 +205,20 @@ export function MarketDetailView({ symbol }: { symbol: string }) {
             <section className="panel position-card">
               <div className="panel-head-inline">
                 <span className="eyebrow">Your position</span>
-                <span className={`freshness ${market.fresh ? "is-fresh" : "is-stale"}`}>
-                  <span className="dot" /> {market.fresh ? "fresh" : "stale"}
+                <span className={`freshness ${available ? "is-fresh" : "is-stale"}`}>
+                  <span className="dot" /> {available ? "fresh" : "stale"}
                 </span>
               </div>
               <div className="position-amount">
                 <strong>{position === null ? "0" : formatTokenAmount(position.amount, 6)}</strong>
-                <span>{asset.symbol}</span>
+                <span>{assetDisplayName(asset.symbol)}</span>
               </div>
               <div className="position-value">
                 <span>Value</span>
                 <strong>
                   {position?.valueUsdc === null || position?.valueUsdc === undefined
                     ? "—"
-                    : `${formatPrice(position.valueUsdc)} tUSDC`}
+                    : `${formatPrice(position.valueUsdc)} ${settlementDisplayName()}`}
                 </strong>
               </div>
               <div className="position-value">
@@ -193,19 +226,53 @@ export function MarketDetailView({ symbol }: { symbol: string }) {
                 <strong className={pctTone(position?.change24hPct)}>
                   {position?.change24hUsdc === undefined || position?.change24hUsdc === null
                     ? "—"
-                    : `${formatPrice(position.change24hUsdc)} tUSDC (${formatPct(position.change24hPct)})`}
+                    : `${formatPrice(position.change24hUsdc)} ${settlementDisplayName()} (${formatPct(position.change24hPct)})`}
+                </strong>
+              </div>
+              <div className="position-value">
+                <span>
+                  {position?.simulated && position.avgCostUsdc != null
+                    ? "Simulated avg cost"
+                    : "Average cost"}
+                </span>
+                <strong>
+                  {position?.avgCostUsdc === undefined || position.avgCostUsdc === null
+                    ? "unavailable"
+                    : `${formatPrice(position.avgCostUsdc)} ${settlementDisplayName()}`}
+                </strong>
+              </div>
+              <div className="position-value">
+                <span>
+                  {position?.simulated && position.unrealizedPnlUsdc != null
+                    ? "Simulated P&L"
+                    : "Average-cost P&L"}
+                </span>
+                <strong className={pctTone(position?.unrealizedPnlPct)}>
+                  {position?.unrealizedPnlUsdc === undefined || position.unrealizedPnlUsdc === null
+                    ? "unavailable"
+                    : `${formatPrice(position.unrealizedPnlUsdc)} ${settlementDisplayName()} (${formatPct(position.unrealizedPnlPct)})`}
                 </strong>
               </div>
             </section>
           )}
-          <TradePanel asset={asset} snapshot={market} />
+          <TradePanel asset={asset} snapshot={market} environmentOverride={environment} />
           <section className="panel side-note">
             <h3>Settlement rules</h3>
             <ul>
-              <li>Buys mint the stock token at the reference price.</li>
-              <li>Sells burn it back for test settlement.</li>
+              {environment?.mode === "demo" ? (
+                <li>Preview fills update off-chain balances at the reference price.</li>
+              ) : (
+                <li>Buys mint the stock token at the reference price.</li>
+              )}
+              {environment?.mode !== "demo" && <li>Sells burn it back for test settlement.</li>}
               <li>Policy checks run again at execution.</li>
-              <li>Preview fills never touch a blockchain.</li>
+              {environment?.mode === "demo" && <li>Preview fills never touch a blockchain.</li>}
+              {environment?.mode === "local-anvil" && (
+                <li>Transactions stay on the local Anvil testnet.</li>
+              )}
+              {environment?.mode === "base-sepolia" && (
+                <li>Settlement is limited to Base Sepolia testnet contracts.</li>
+              )}
             </ul>
           </section>
         </div>
@@ -213,12 +280,13 @@ export function MarketDetailView({ symbol }: { symbol: string }) {
 
       <div className="detail-lower">
         <section className="panel prose-panel">
-          <h2>About {asset.symbol}</h2>
+          <h2>About {assetDisplayName(asset.symbol)}</h2>
           <p>{asset.description}</p>
           <p>
             The token is a reference-price instrument for {asset.underlying}. It is not a share
-            certificate, carries no voting rights, and in this preview it is not deployed to any
-            chain. Holdings shown here are simulated.
+            certificate, carries no voting rights, and has no real-world redemption value. Test
+            tokens. No real value. Not real shares. Not investment advice.{" "}
+            {environmentDisclosure(environment)}
           </p>
           <div className="pill-row">
             <span className="pill">Fixed reference price</span>
@@ -235,7 +303,9 @@ export function MarketDetailView({ symbol }: { symbol: string }) {
           <dl className="kv-list">
             <div>
               <dt>Source kind</dt>
-              <dd>Simulated deterministic feed</dd>
+              <dd>
+                {market.simulated ? "simulated reference feed" : priceSourceLabel(environment)}
+              </dd>
             </div>
             <div>
               <dt>Source updated</dt>
@@ -249,11 +319,17 @@ export function MarketDetailView({ symbol }: { symbol: string }) {
             </div>
             <div>
               <dt>Chain</dt>
-              <dd>Base Sepolia · 84532</dd>
+              <dd>
+                {environment?.mode === "demo"
+                  ? "Off-chain demo · no settlement chain"
+                  : environment === null
+                    ? "Checking…"
+                    : `${environment.chainName} · ${environment.chainId}`}
+              </dd>
             </div>
             <div>
               <dt>Contracts</dt>
-              <dd>Not deployed in this preview</dd>
+              <dd>{contractsLabel(environment)}</dd>
             </div>
           </dl>
           <div className="callout callout-warn compact">
@@ -270,9 +346,9 @@ export function MarketDetailView({ symbol }: { symbol: string }) {
             <ShieldIcon size={17} /> Trade policy
           </h2>
           <ul className="check-list">
-            <li>1 tUSDC minimum, 1,000 tUSDC maximum per order</li>
-            <li>5,000 tUSDC daily notional across all instruments</li>
-            <li>Quotes expire after 120 seconds and are recomputed at execution</li>
+            <li>1 test USDC unit minimum, 1,000 maximum per order</li>
+            <li>5,000 test USDC units daily notional across all instruments</li>
+            <li>Quotes are valid for 30 seconds and are recomputed at execution</li>
             <li>Price drift beyond tolerance fails closed</li>
             <li>Exact allowance only — no unlimited approvals</li>
           </ul>

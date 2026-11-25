@@ -544,8 +544,12 @@ def test_existing_tools_regression() -> None:
     stocks_list = server.list_stocks()
     assert stocks_list == [
         {"ticker": "tAAPL", "name": "Test Apple", "reference_value": 230.0},
+        {"ticker": "tNVDA", "name": "Test NVIDIA", "reference_value": 140.0},
+        {"ticker": "tMSFT", "name": "Test Microsoft", "reference_value": 415.0},
+        {"ticker": "tGOOGL", "name": "Test Google", "reference_value": 180.0},
+        {"ticker": "tAMZN", "name": "Test Amazon", "reference_value": 200.0},
         {"ticker": "tTSLA", "name": "Test Tesla", "reference_value": 250.0},
-        {"ticker": "tNVDA", "name": "Test Nvidia", "reference_value": 140.0},
+        {"ticker": "tMETA", "name": "Test Meta", "reference_value": 520.0},
     ]
 
 

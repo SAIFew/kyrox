@@ -29,6 +29,8 @@ import {
   type PriceObservation,
 } from "@kyrox/core";
 
+import { KYROX_EXCHANGE_ABI } from "@kyrox/protocol";
+
 import { prepareTradeIntent } from "../src/intent.js";
 
 const RUN = process.env["KYROX_ANVIL_E2E"] === "1";
@@ -311,6 +313,75 @@ describe.skipIf(!RUN)("Anvil end-to-end trading path", () => {
         getChainId: () => client.getChainId(),
         getTokenDecimals: async (token: Address) =>
           (await call(token, stockArtifact, "decimals", [])) as number,
+        readObservation: async (exchangeAddress: Address, token: Address) => {
+          const result: unknown = await client.readContract({
+            address: exchangeAddress,
+            abi: KYROX_EXCHANGE_ABI,
+            functionName: "observation",
+            args: [token],
+          });
+          // Viem/client versions differ on whether named multi-output ABI
+          // results are objects or tuples. Prefer the ABI's named fields and
+          // retain tuple support for the currently pinned viem version.
+          if (Array.isArray(result) && result.length === 7) {
+            const [
+              price,
+              roundId,
+              sourceUpdatedAt,
+              publishedAt,
+              sourceChainId,
+              feedAddress,
+              simulated,
+            ] = result as unknown as readonly [
+              bigint,
+              bigint,
+              bigint,
+              bigint,
+              bigint,
+              Address,
+              boolean,
+            ];
+            return {
+              priceUsdcPerWholeToken: price,
+              sourceRoundId: roundId,
+              sourceUpdatedAt: Number(sourceUpdatedAt),
+              publishedAt: Number(publishedAt),
+              sourceChainId: Number(sourceChainId),
+              feedAddress,
+              simulated,
+            };
+          }
+          if (result !== null && typeof result === "object") {
+            const named = result as Record<string, unknown>;
+            const price = named["priceUsdcPerWholeToken"];
+            const roundId = named["sourceRoundId"];
+            const sourceUpdatedAt = named["sourceUpdatedAt"];
+            const publishedAt = named["publishedAt"];
+            const sourceChainId = named["sourceChainId"];
+            const feedAddress = named["feedAddress"];
+            const simulated = named["simulated"];
+            if (
+              typeof price === "bigint" &&
+              typeof roundId === "bigint" &&
+              typeof sourceUpdatedAt === "bigint" &&
+              typeof publishedAt === "bigint" &&
+              typeof sourceChainId === "bigint" &&
+              typeof feedAddress === "string" &&
+              typeof simulated === "boolean"
+            ) {
+              return {
+                priceUsdcPerWholeToken: price,
+                sourceRoundId: roundId,
+                sourceUpdatedAt: Number(sourceUpdatedAt),
+                publishedAt: Number(publishedAt),
+                sourceChainId: Number(sourceChainId),
+                feedAddress: feedAddress as Address,
+                simulated,
+              };
+            }
+          }
+          throw new Error("Exchange observation result has an unsupported shape.");
+        },
       };
 
       // 5-6. Prepare the buy intent and verify the exact unsigned calldata.

@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 
 import { MarketDetailView } from "../../../components/market-detail";
 import { demoAsset } from "../../../lib/demo/market";
+import { assetDisplayName } from "../../../lib/presentation";
 
 export async function generateMetadata({
   params,
@@ -12,9 +13,10 @@ export async function generateMetadata({
   const { symbol } = await params;
   const asset = demoAsset(symbol);
   if (asset === null) return { title: "Market not found" };
+  const displayName = assetDisplayName(asset.symbol);
   return {
-    title: `${asset.symbol} · ${asset.name}`,
-    description: `${asset.symbol} reference market on KYROX. Simulated price, transparent freshness, and policy-constrained quotes.`,
+    title: `${displayName} · ${asset.underlying}`,
+    description: `${displayName} reference market on the KYROX testnet. Transparent freshness, explicit simulation labels, and policy-constrained quotes.`,
   };
 }
 

@@ -1,8 +1,9 @@
+import { TESTNET_ASSETS, isSupportedStockDecimals } from "./assets.js";
 import { BASE_SEPOLIA_CHAIN_ID } from "./chains.js";
 import { CoreError, type CoreErrorCode } from "./errors.js";
 import type { AssetFreshnessConfig, MarketSession, PriceBounds } from "./price.js";
 import { assertPriceWithinBounds } from "./price.js";
-import { quoteNotionalUsdc, type Quote } from "./quote.js";
+import { assertTradeSide, quoteNotionalUsdc, type Quote } from "./quote.js";
 
 /**
  * Testnet trading policy.
@@ -22,7 +23,9 @@ export const TESTNET_TRADE_POLICY: TradePolicyConfig = {
   minTradeUsdc: 1_000_000n, // 1 tUSDC
   maxTradeUsdc: 1_000_000_000n, // 1,000 tUSDC
   dailyLimitUsdc: 5_000_000_000n, // 5,000 tUSDC
-  allowedAssets: ["tAAPL", "tTSLA", "tNVDA"],
+  // Keep the allowlist in lockstep with the tradable catalogue so the two
+  // surfaces cannot drift apart as assets are added or delisted.
+  allowedAssets: TESTNET_ASSETS.filter((asset) => asset.listed).map((asset) => asset.symbol),
 };
 
 export const SECONDS_PER_UTC_DAY = 86_400;
@@ -85,6 +88,10 @@ export function evaluateTradePolicy(
   context: PolicyContext,
 ): PolicyDecision {
   assertPolicyConfig(config);
+  assertTradeSide(quote.side);
+  if (!isSupportedStockDecimals(quote.stockDecimals)) {
+    throw new CoreError("INVALID_DECIMALS", "Quote stock decimals are unsupported.");
+  }
 
   if (!Number.isInteger(context.nowSeconds) || context.nowSeconds <= 0) {
     throw new CoreError("INVALID_TIMESTAMP", "nowSeconds must be a positive integer.");
@@ -210,4 +217,77 @@ export function remainingDailyLimit(config: TradePolicyConfig, dailySpentUsdc: b
   }
   const remaining = config.dailyLimitUsdc - dailySpentUsdc;
   return remaining > 0n ? remaining : 0n;
+}
+
+/**
+ * Safe, dashboard-editable subset of testnet policy.
+ *
+ * Admins may tighten limits or remove an asset, but may never widen beyond the
+ * launch ceiling. The resolver is pure so the API, admin UI and tests agree.
+ */
+export interface EditablePolicy {
+  readonly minTradeUsdc: bigint;
+  readonly maxTradeUsdc: bigint;
+  readonly dailyLimitUsdc: bigint;
+  readonly allowedAssets: readonly string[];
+  readonly tradingEnabled: boolean;
+}
+
+export const TESTNET_POLICY_CEILING = Object.freeze({
+  minTradeUsdc: 1_000_000n,
+  maxTradeUsdc: 1_000_000_000n,
+  dailyLimitUsdc: 5_000_000_000n,
+});
+
+function policyReject(message: string): never {
+  throw new CoreError("INVALID_AMOUNT", message);
+}
+
+export function resolveEditablePolicy(input: {
+  readonly minTradeUsdc?: bigint;
+  readonly maxTradeUsdc?: bigint;
+  readonly dailyLimitUsdc?: bigint;
+  readonly allowedAssets?: readonly string[];
+  readonly tradingEnabled?: boolean;
+}): EditablePolicy {
+  const min = input.minTradeUsdc ?? TESTNET_TRADE_POLICY.minTradeUsdc;
+  const max = input.maxTradeUsdc ?? TESTNET_TRADE_POLICY.maxTradeUsdc;
+  const daily = input.dailyLimitUsdc ?? TESTNET_TRADE_POLICY.dailyLimitUsdc;
+  if (min < TESTNET_POLICY_CEILING.minTradeUsdc) {
+    policyReject("The minimum trade cannot be below the launch minimum.");
+  }
+  if (max > TESTNET_POLICY_CEILING.maxTradeUsdc) {
+    policyReject("The maximum trade cannot exceed the launch maximum.");
+  }
+  if (max < min) policyReject("The maximum trade must be at least the minimum.");
+  if (daily > TESTNET_POLICY_CEILING.dailyLimitUsdc) {
+    policyReject("The daily limit cannot exceed the launch daily limit.");
+  }
+  if (daily < max) policyReject("The daily limit must be at least the maximum trade.");
+
+  const ceilingAssets = TESTNET_ASSETS.filter((asset) => asset.listed).map((asset) => asset.symbol);
+  const requested = input.allowedAssets ?? ceilingAssets;
+  if (requested.length === 0) policyReject("At least one asset must remain enabled.");
+  const unique = [...new Set(requested)];
+  if (unique.length !== requested.length) policyReject("The asset allowlist contains duplicates.");
+  if (unique.some((symbol) => !ceilingAssets.includes(symbol))) {
+    policyReject("The asset allowlist cannot include an unlisted asset.");
+  }
+
+  return {
+    minTradeUsdc: min,
+    maxTradeUsdc: max,
+    dailyLimitUsdc: daily,
+    allowedAssets: unique,
+    tradingEnabled: input.tradingEnabled ?? true,
+  };
+}
+
+export function tradePolicyFromEditable(policy: EditablePolicy): TradePolicyConfig {
+  return {
+    minTradeUsdc: policy.minTradeUsdc,
+    maxTradeUsdc: policy.maxTradeUsdc,
+    dailyLimitUsdc: policy.dailyLimitUsdc,
+    allowedAssets: policy.allowedAssets,
+  };
 }

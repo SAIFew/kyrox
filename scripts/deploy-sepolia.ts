@@ -36,6 +36,7 @@ class DryRunConfigError extends Error {
 interface ArtifactFile {
   readonly abi: Abi;
   readonly bytecode: { readonly object: Hex };
+  readonly deployedBytecode: { readonly object: Hex };
   readonly metadata: string | object;
 }
 
@@ -88,7 +89,7 @@ function parseDeviationConfig(raw: string | undefined): Map<string, number> {
   const value = raw?.trim() ?? "";
   if (value.length === 0) {
     throw new DryRunConfigError(
-      "SEPOLIA_DEVIATION_BPS is required, e.g. 'tAAPL:500,tTSLA:500,tNVDA:500'.",
+      "SEPOLIA_DEVIATION_BPS is required, e.g. 'tAAPL:500,tNVDA:500,tMSFT:500,tGOOGL:500,tAMZN:500,tTSLA:500,tMETA:500'.",
     );
   }
   const parsed = new Map<string, number>();
@@ -155,7 +156,7 @@ export async function runDryRun(
       feedDescription: feed.expectedDescription,
       sourceChainId: feed.expectedChainId,
       verifiedAt: feed.verifiedAt,
-      maxSourceAgeSeconds: 3_600,
+      maxSourceAgeSeconds: 600,
       minPriceUsdcPerWholeToken: 1n,
       maxPriceUsdcPerWholeToken: 10n ** 12n,
       maxPriceDeviationBps: bps,
@@ -163,6 +164,7 @@ export async function runDryRun(
   });
 
   const gasEstimates: Record<string, string | null> = {};
+  const gasEstimateFailures: Record<string, string> = {};
   if (deps.estimateGas !== undefined) {
     const deployable: Array<{ key: string; artifact: ArtifactFile; args: readonly unknown[] }> = [
       { key: "TestUSDC", artifact: usdc.artifact, args: [roles.admin] },
@@ -180,13 +182,18 @@ export async function runDryRun(
           args: entry.args,
         });
         gasEstimates[entry.key] = (
-          await deps.estimateGas({ account: roles.admin, data })
+          await deps.estimateGas({ account: roles.deployer, data })
         ).toString();
-      } catch {
+      } catch (error) {
         gasEstimates[entry.key] = null;
+        gasEstimateFailures[entry.key] = redactRpcSecrets(
+          error instanceof Error ? error.message : String(error),
+          [rpcUrl, env["BASE_SEPOLIA_RPC_URL_SECONDARY"]?.trim() ?? ""],
+        );
       }
     }
     gasEstimates["KyroxExchange"] = null;
+    gasEstimateFailures["KyroxExchange"] = "constructor requires the deployed TestUSDC address";
   }
 
   const plan = buildDeploymentPlan({
@@ -199,6 +206,7 @@ export async function runDryRun(
     },
     createdAt: new Date().toISOString(),
     gasEstimates,
+    gasEstimateFailures,
   });
 
   const write = deps.writeManifest ?? ((path, contents) => writeFileSync(path, contents));
@@ -207,7 +215,26 @@ export async function runDryRun(
   return plan;
 }
 
-function humanPlan(plan: DeploymentPlan, rpcUrl: string): string {
+export function redactRpcUrl(rpcUrl: string): string {
+  try {
+    const parsed = new URL(rpcUrl);
+    if (parsed.host.length === 0) return "[redacted]";
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return "[redacted]";
+  }
+}
+
+export function redactRpcSecrets(message: string, rpcUrls: readonly string[]): string {
+  let redacted = message;
+  for (const rpcUrl of rpcUrls) {
+    if (rpcUrl.length === 0) continue;
+    redacted = redacted.split(rpcUrl).join(redactRpcUrl(rpcUrl));
+  }
+  return redacted;
+}
+
+export function formatHumanDeploymentPlan(plan: DeploymentPlan, rpcUrl: string): string {
   const lines: string[] = [
     "KYROX — Base Sepolia deployment dry run",
     "=======================================",
@@ -218,7 +245,7 @@ function humanPlan(plan: DeploymentPlan, rpcUrl: string): string {
     "NO MANIFEST IS APPROVED FOR PRODUCTION USE.",
     "",
     "Target chain: 84532 (Base Sepolia) — verified via RPC",
-    `RPC: ${rpcUrl}`,
+    `RPC: ${redactRpcUrl(rpcUrl)}`,
     "Chain identity: genesis and checkpoint pinned; two providers agreed.",
     `Deployer: ${plan.roles.deployer}`,
     "",
@@ -287,7 +314,7 @@ async function main(argv: readonly string[]): Promise<number> {
     });
 
     if (!argv.includes("--json")) {
-      console.log(humanPlan(plan, rpcUrl));
+      console.log(formatHumanDeploymentPlan(plan, rpcUrl));
       console.log("\n--- JSON PLAN ---");
     }
     console.log(JSON.stringify(plan, null, 2));
@@ -297,7 +324,12 @@ async function main(argv: readonly string[]): Promise<number> {
       console.error(`Dry run refused: ${error.message}`);
       return 2;
     }
-    console.error(`Dry run failed: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(
+      `Dry run failed: ${redactRpcSecrets(error instanceof Error ? error.message : String(error), [
+        rpcUrl,
+        secondaryUrl,
+      ])}`,
+    );
     return 1;
   }
 }

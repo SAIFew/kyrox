@@ -27,16 +27,16 @@ import {
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const MCP_ROOT = path.join(REPO_ROOT, "services/mcp-server");
 
-function resolveMcpPythonRuntime(): string | null {
-  const candidates = [
-    process.env.KYROX_MCP_PYTHON,
-    path.join(MCP_ROOT, ".venv/bin/python"),
-    path.resolve(REPO_ROOT, "../kyro-mcp/.venv/bin/python"),
-    "python3",
-    "python",
-  ].filter((c): c is string => Boolean(c));
+export function mcpPythonRuntimeCandidates(explicitPython?: string): readonly string[] {
+  const explicit = explicitPython?.trim();
+  // Only the explicitly selected interpreter or this service's own environment
+  // is authoritative. Never discover a legacy sibling checkout or an arbitrary
+  // Python installation that happens to be first on PATH.
+  return explicit ? [explicit] : [path.join(MCP_ROOT, ".venv/bin/python")];
+}
 
-  for (const candidate of candidates) {
+function resolveMcpPythonRuntime(): string | null {
+  for (const candidate of mcpPythonRuntimeCandidates(process.env.KYROX_MCP_PYTHON)) {
     if (candidate.includes("/") && !existsSync(candidate)) {
       continue;
     }
@@ -61,7 +61,7 @@ function resolveMcpPythonRuntime(): string | null {
 const MCP_PYTHON = resolveMcpPythonRuntime();
 if (process.env.KYROX_REQUIRE_CROSS_SURFACE_RUNTIME === "1" && MCP_PYTHON === null) {
   throw new Error(
-    "KYROX_REQUIRE_CROSS_SURFACE_RUNTIME=1 was set, but no Python interpreter with services/mcp-server runtime dependencies (web3, python-dotenv, mcp) was found.",
+    "KYROX_REQUIRE_CROSS_SURFACE_RUNTIME=1 was set, but the current services/mcp-server Python runtime could not be loaded. Set KYROX_MCP_PYTHON to a Python interpreter with the service dependencies (web3, python-dotenv, mcp), or create services/mcp-server/.venv. Legacy sibling runtimes are not used.",
   );
 }
 
@@ -117,7 +117,7 @@ decision_8453 = policy_mod.evaluate_transaction_policy("tAAPL", "1", chain_id=84
 # 2. Asset allowlist runtime evaluation
 valid_ticker = policy_mod.validate_approved_ticker("tAAPL")
 try:
-    policy_mod.validate_approved_ticker("tMSFT")
+    policy_mod.validate_approved_ticker("tDOGE")
     invalid_ticker_code = "NONE"
 except errors_mod.KyroxError as exc:
     invalid_ticker_code = exc.code.value
@@ -209,6 +209,17 @@ print(json.dumps({
   return JSON.parse(raw) as PythonRuntimeProbe;
 }
 
+describe("cross-surface runtime discovery", () => {
+  it("uses only the current service environment when no interpreter is explicit", () => {
+    expect(mcpPythonRuntimeCandidates()).toEqual([path.join(MCP_ROOT, ".venv/bin/python")]);
+    expect(mcpPythonRuntimeCandidates("  ")).toEqual([path.join(MCP_ROOT, ".venv/bin/python")]);
+  });
+
+  it("honors an explicit interpreter without falling back to a sibling checkout", () => {
+    expect(mcpPythonRuntimeCandidates(" /opt/kyrox/python ")).toEqual(["/opt/kyrox/python"]);
+  });
+});
+
 describe.skipIf(MCP_PYTHON === null)(
   "Cross-surface runtime invariants (TypeScript @kyrox/core & @kyrox/protocol vs. Python MCP runtime)",
   () => {
@@ -244,19 +255,21 @@ describe.skipIf(MCP_PYTHON === null)(
       expect(py.chain8453ErrorCode).toBe("UNSUPPORTED_CHAIN_ID");
     });
 
-    it("enforces identical approved synthetic asset tickers (tAAPL, tTSLA, tNVDA) and rejects unapproved tickers at runtime", () => {
+    it("enforces identical approved synthetic asset tickers (seven-asset testnet catalogue) and rejects unapproved tickers at runtime", () => {
+      const expectedTickers = ["tAAPL", "tNVDA", "tMSFT", "tGOOGL", "tAMZN", "tTSLA", "tMETA"];
       const tsPolicyTickers = [...TESTNET_TRADE_POLICY.allowedAssets];
       const tsCatalogueTickers = TESTNET_ASSETS.map((a) => a.symbol);
       const tsTradableTickers = testnetAssetRegistry.listTradable().map((a) => a.symbol);
 
-      expect(tsPolicyTickers).toEqual(["tAAPL", "tTSLA", "tNVDA"]);
+      expect(tsPolicyTickers).toEqual(expectedTickers);
       expect(tsCatalogueTickers).toEqual(tsPolicyTickers);
       expect(tsTradableTickers).toEqual(tsPolicyTickers);
       expect(py.approvedTickersCanonical).toEqual(tsPolicyTickers);
       expect(py.loadedStockTickers).toEqual(tsPolicyTickers);
 
       expect(testnetAssetRegistry.get("tAAPL").symbol).toBe(py.validTickerResult);
-      expect(() => testnetAssetRegistry.get("tMSFT")).toThrowError(CoreError);
+      expect(testnetAssetRegistry.get("tMSFT").symbol).toBe("tMSFT");
+      expect(() => testnetAssetRegistry.get("tDOGE")).toThrowError(CoreError);
       expect(py.invalidTickerErrorCode).toBe("POLICY_REJECTED");
     });
 

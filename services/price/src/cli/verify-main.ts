@@ -85,6 +85,8 @@ export function verifyExitCode(state: string): number {
       return 4;
     case "pending":
       return 3;
+    case "unavailable":
+      return 5;
     default:
       return 1;
   }

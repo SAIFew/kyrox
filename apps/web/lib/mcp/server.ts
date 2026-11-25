@@ -1,4 +1,10 @@
-import { TESTNET_TRADE_POLICY, fromBaseUnits, toBaseUnits } from "@kyrox/core";
+import {
+  MAX_BASKET_LEGS,
+  TESTNET_TRADE_POLICY,
+  allocateBasketBudget,
+  fromBaseUnits,
+  toBaseUnits,
+} from "@kyrox/core";
 
 import type { ChartRange, TradeSide } from "../market-types.js";
 import {
@@ -62,6 +68,25 @@ export const MCP_TOOLS: readonly McpTool[] = [
     },
   },
   {
+    name: "kyrox_quote_basket",
+    description:
+      "Split a tUSDC budget across up to four test stocks. Returns an allocation only; every leg still needs its own quote and user signature. Never executes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        symbols: {
+          type: "array",
+          items: { type: "string" },
+          description: 'Distinct tickers, e.g. ["tAAPL", "tNVDA"]',
+        },
+        totalUsdc: { type: "string", description: "Human-readable tUSDC budget, e.g. 500" },
+        weights: { type: "array", items: { type: "number" } },
+      },
+      required: ["symbols", "totalUsdc"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "kyrox_get_protocol_status",
     description:
       "Read the honest environment status: simulation labels, contract deployment state, and policy limits.",
@@ -69,24 +94,34 @@ export const MCP_TOOLS: readonly McpTool[] = [
   },
 ] as const;
 
+const ALL_TOOL_NAMES = new Set(MCP_TOOLS.map((tool) => tool.name));
+const LIVE_TOOL_NAMES = new Set(["kyrox_get_protocol_status"]);
+
+/** Discovery must never advertise tools that only exist in the preview venue. */
+export function mcpTools(): readonly McpTool[] {
+  return isDemoMode() ? MCP_TOOLS : MCP_TOOLS.filter((tool) => LIVE_TOOL_NAMES.has(tool.name));
+}
+
+export function isMcpToolAvailable(name: string): boolean {
+  return mcpTools().some((tool) => tool.name === name);
+}
+
 const SYNTHETIC_ADDRESS = "0x00000000000000000000000000000000000000a1" as const;
 
 function syntheticSession(now: number): DemoSession {
   const base = defaultDemoLedger();
+  const balances: Record<string, string> = {
+    ...base.balances,
+    tUSDC: toBaseUnits("1000000", 6).toString(),
+  };
+  for (const asset of DEMO_ASSETS) {
+    balances[asset.symbol] = toBaseUnits("5000", asset.decimals).toString();
+  }
   return {
     address: SYNTHETIC_ADDRESS,
     expiresAt: now + 600,
     demo: true,
-    ledger: {
-      balances: {
-        ...base.balances,
-        tUSDC: toBaseUnits("1000000", 6).toString(),
-        tAAPL: toBaseUnits("5000", 18).toString(),
-        tTSLA: toBaseUnits("5000", 18).toString(),
-        tNVDA: toBaseUnits("5000", 18).toString(),
-      },
-      activity: [],
-    },
+    ledger: { balances, activity: [] },
   };
 }
 
@@ -103,25 +138,87 @@ function marketSummary() {
   }));
 }
 
+function policySummary() {
+  return {
+    minTradeUsdc: fromBaseUnits(TESTNET_TRADE_POLICY.minTradeUsdc, 6),
+    maxTradeUsdc: fromBaseUnits(TESTNET_TRADE_POLICY.maxTradeUsdc, 6),
+    dailyLimitUsdc: fromBaseUnits(TESTNET_TRADE_POLICY.dailyLimitUsdc, 6),
+    allowedAssets: TESTNET_TRADE_POLICY.allowedAssets,
+  };
+}
+
+function protocolStatus() {
+  try {
+    const demo = isDemoMode();
+    return {
+      environment: environmentInfo(),
+      policy: policySummary(),
+      capabilities: {
+        read: true,
+        markets: demo,
+        quote: demo,
+        sign: false,
+        send: false,
+        transfer: false,
+        arbitraryCalldata: false,
+      },
+      availableTools: mcpTools().map((tool) => tool.name),
+      disclaimer: demo
+        ? "Preview environment. No contracts are deployed on Base Sepolia and no value is transferable."
+        : "Live configuration resolved. Only protocol status is exposed by this public MCP bridge; authenticated market and quote operations remain in the application API.",
+    };
+  } catch {
+    return {
+      error: "environment_unavailable",
+      code: "LIVE_ENVIRONMENT_UNAVAILABLE",
+      message: "The live runtime configuration could not be resolved.",
+      capabilities: {
+        read: false,
+        markets: false,
+        quote: false,
+        sign: false,
+        send: false,
+        transfer: false,
+        arbitraryCalldata: false,
+      },
+    };
+  }
+}
+
+function invalidArguments(message: string) {
+  return { error: "invalid_arguments", code: "INVALID_ARGUMENTS", message };
+}
+
 export function callTool(name: string, args: Record<string, unknown>): unknown {
   const now = Math.floor(Date.now() / 1_000);
 
+  if (!ALL_TOOL_NAMES.has(name)) return { error: "unknown_tool", name };
   if (!isDemoMode()) {
-    return {
-      error: "live_mode_read_only",
-      message:
-        "This endpoint is the public preview bridge. A deployed KYROX instance serves live observations from its own host.",
-      environment: environmentInfo(),
-    };
+    if (name !== "kyrox_get_protocol_status") {
+      return {
+        error: "tool_unavailable",
+        code: "LIVE_TOOL_UNAVAILABLE",
+        mode: "live",
+        message: "This tool is not available in live mode.",
+        availableTools: mcpTools().map((tool) => tool.name),
+      };
+    }
+    return protocolStatus();
   }
 
   switch (name) {
     case "kyrox_list_markets":
       return { simulated: true, asOf: now, markets: marketSummary() };
     case "kyrox_get_market": {
-      const symbol = typeof args["symbol"] === "string" ? args["symbol"] : "";
-      const rangeValue = typeof args["range"] === "string" ? args["range"] : "1W";
-      const range: ChartRange = isChartRange(rangeValue) ? rangeValue : "1W";
+      const symbol = args["symbol"];
+      if (typeof symbol !== "string" || symbol.trim().length === 0) {
+        return invalidArguments("symbol must be a non-empty ticker string.");
+      }
+      const rangeValue = "range" in args ? args["range"] : "1W";
+      if (typeof rangeValue !== "string" || !isChartRange(rangeValue)) {
+        return invalidArguments("range must be one of 1D, 1W, 1M, or 3M.");
+      }
+      const range: ChartRange = rangeValue;
       const detail = demoDetail(symbol, range, now);
       if (detail === null) return { error: "unknown_market", symbol };
       return {
@@ -141,13 +238,74 @@ export function callTool(name: string, args: Record<string, unknown>): unknown {
         disclaimer: "Simulated reference observations. No oracle feed is connected.",
       };
     }
+    case "kyrox_quote_basket": {
+      const symbols = args["symbols"];
+      const total = args["totalUsdc"];
+      if (!Array.isArray(symbols) || symbols.some((item) => typeof item !== "string")) {
+        return invalidArguments("symbols must be an array of ticker strings.");
+      }
+      if (symbols.length === 0 || symbols.length > MAX_BASKET_LEGS) {
+        return invalidArguments(`symbols must contain 1..${MAX_BASKET_LEGS} tickers.`);
+      }
+      if (typeof total !== "string" || total.trim().length === 0) {
+        return invalidArguments("totalUsdc must be a decimal string.");
+      }
+      const weights = args["weights"];
+      if (
+        weights !== undefined &&
+        (!Array.isArray(weights) ||
+          weights.some((item) => typeof item !== "number" || !Number.isInteger(item) || item <= 0))
+      ) {
+        return invalidArguments("weights must be positive integers when supplied.");
+      }
+      const unknown = symbols.find(
+        (symbol) => !DEMO_ASSETS.some((asset) => asset.symbol === symbol),
+      );
+      if (unknown !== undefined) return { error: "unknown_market", symbol: unknown };
+      try {
+        const legs = allocateBasketBudget(
+          symbols as string[],
+          toBaseUnits(total, 6),
+          weights as number[] | undefined,
+        );
+        return {
+          simulated: true,
+          nonBinding: true,
+          totalUsdc: total,
+          legs: legs.map((leg) => ({
+            symbol: leg.symbol,
+            amountUsdc: fromBaseUnits(leg.amountInUsdc, 6),
+          })),
+          note: "Allocation only. Each leg needs a separate quote, policy check, and wallet signature.",
+          canSign: false,
+          canExecute: false,
+        };
+      } catch (error) {
+        return invalidArguments(error instanceof Error ? error.message : "Invalid basket.");
+      }
+    }
     case "kyrox_preview_quote": {
-      const symbol = typeof args["symbol"] === "string" ? args["symbol"] : "";
+      const symbol = args["symbol"];
+      if (typeof symbol !== "string" || symbol.trim().length === 0) {
+        return invalidArguments("symbol must be a non-empty ticker string.");
+      }
       const side: TradeSide = args["side"] === "sell" ? "sell" : "buy";
+      if (args["side"] !== "buy" && args["side"] !== "sell") {
+        return invalidArguments("side must be buy or sell.");
+      }
       const asset = DEMO_ASSETS.find((entry) => entry.symbol === symbol);
       if (asset === undefined) return { error: "unknown_market", symbol };
-      const amount = typeof args["amount"] === "string" ? args["amount"] : "0";
-      const slippage = typeof args["slippageBps"] === "number" ? args["slippageBps"] : 50;
+      const amount = args["amount"];
+      const slippage = "slippageBps" in args ? args["slippageBps"] : 50;
+      if (typeof amount !== "string") return invalidArguments("amount must be a decimal string.");
+      if (
+        typeof slippage !== "number" ||
+        !Number.isInteger(slippage) ||
+        slippage < 0 ||
+        slippage > 1_000
+      ) {
+        return invalidArguments("slippageBps must be an integer 0..1000.");
+      }
       try {
         const amountIn = toBaseUnits(amount, side === "buy" ? 6 : asset.decimals);
         const quote = createDemoQuote({
@@ -180,25 +338,7 @@ export function callTool(name: string, args: Record<string, unknown>): unknown {
       }
     }
     case "kyrox_get_protocol_status":
-      return {
-        environment: environmentInfo(),
-        policy: {
-          minTradeUsdc: fromBaseUnits(TESTNET_TRADE_POLICY.minTradeUsdc, 6),
-          maxTradeUsdc: fromBaseUnits(TESTNET_TRADE_POLICY.maxTradeUsdc, 6),
-          dailyLimitUsdc: fromBaseUnits(TESTNET_TRADE_POLICY.dailyLimitUsdc, 6),
-          allowedAssets: TESTNET_TRADE_POLICY.allowedAssets,
-        },
-        capabilities: {
-          read: true,
-          quote: true,
-          sign: false,
-          send: false,
-          transfer: false,
-          arbitraryCalldata: false,
-        },
-        disclaimer:
-          "Preview environment. No contracts are deployed on Base Sepolia and no value is transferable.",
-      };
+      return protocolStatus();
     default:
       return { error: "unknown_tool", name };
   }

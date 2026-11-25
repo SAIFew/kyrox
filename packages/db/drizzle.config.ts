@@ -14,6 +14,7 @@ export default defineConfig({
   strict: true,
   verbose: true,
   dbCredentials: {
-    url: process.env.DATABASE_URL ?? "",
+    // Migrations must bypass transaction-poolers and use a direct connection.
+    url: process.env["DIRECT_DATABASE_URL"]?.trim() || process.env["DATABASE_URL"]?.trim() || "",
   },
 });

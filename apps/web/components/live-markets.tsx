@@ -4,8 +4,15 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import type { EnvironmentInfo, MarketAsset, MarketSnapshot } from "../lib/market-types";
-import { formatCompact, formatPct, formatPrice, pctTone, timeAgo } from "../lib/format";
+import { formatCompact, formatPct, formatPrice, pctTone, timeAgo, toNumber } from "../lib/format";
 import { api } from "../lib/api";
+import {
+  assetDisplayName,
+  environmentShortLabel,
+  observationBadge,
+  priceSourceLabel,
+  settlementDisplayName,
+} from "../lib/presentation";
 import { Sparkline } from "./charts";
 import { ArrowUpRight, MinusIcon, PlusIcon, SearchIcon } from "./icons";
 
@@ -50,7 +57,7 @@ export function useMarkets() {
 }
 
 export function AssetMark({ asset, size = 38 }: { asset: MarketAsset; size?: number }) {
-  const initials = asset.underlying.slice(0, 2);
+  const initial = assetDisplayName(asset.symbol).slice(0, 1);
   return (
     <span
       className="asset-mark"
@@ -63,7 +70,19 @@ export function AssetMark({ asset, size = 38 }: { asset: MarketAsset; size?: num
       }}
       aria-hidden="true"
     >
-      {initials}
+      <svg className="asset-mark-glyph" viewBox="0 0 40 40" fill="none" aria-hidden="true">
+        <circle cx="20" cy="20" r="14.5" stroke="currentColor" strokeOpacity=".24" />
+        <path
+          d="M8 25.5 15 19l5 3 11-10"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          opacity=".62"
+        />
+        <circle cx="31" cy="12" r="2" fill="currentColor" />
+      </svg>
+      <span className="asset-mark-letter">{initial}</span>
     </span>
   );
 }
@@ -72,7 +91,11 @@ export function LandingMarkets() {
   const { data, error } = useMarkets();
 
   if (error.length > 0) {
-    return <p className="muted">Market data is temporarily unavailable. {error}</p>;
+    return (
+      <p className="muted" role="alert" aria-live="assertive">
+        Market data is temporarily unavailable. {error}
+      </p>
+    );
   }
   if (data === null) {
     return (
@@ -101,24 +124,26 @@ export function LandingMarkets() {
             <div className="market-identity">
               <AssetMark asset={market.asset} />
               <div>
-                <strong>{market.asset.symbol}</strong>
+                <strong>{assetDisplayName(market.asset.symbol)}</strong>
                 <span>{market.asset.name}</span>
               </div>
             </div>
-            <span className="sim-badge">simulated</span>
+            <span className="sim-badge">{observationBadge(data.environment, market.snapshot)}</span>
+            {!market.snapshot.fresh && <span className="status-pill warn">stale</span>}
           </div>
           <div className="market-card-price">
             <span className="price-value">{formatPrice(market.snapshot.priceUsdc)}</span>
-            <span className="price-unit">tUSDC</span>
+            <span className="price-unit">{settlementDisplayName()}</span>
           </div>
           <div className="market-card-foot">
-            <span className={`change ${pctTone(market.snapshot.change24hPct)}`}>
-              {market.snapshot.change24hPct >= 0 ? <PlusIcon size={12} /> : <MinusIcon size={12} />}
-              {formatPct(market.snapshot.change24hPct)} · 24h
+            <span className={`change ${pctTone(toNumber(market.snapshot.change24hPct))}`}>
+              {(toNumber(market.snapshot.change24hPct) ?? 0) > 0 && <PlusIcon size={12} />}
+              {(toNumber(market.snapshot.change24hPct) ?? 0) < 0 && <MinusIcon size={12} />}
+              {formatPct(toNumber(market.snapshot.change24hPct))} · 24h
             </span>
             <Sparkline
               points={market.sparkline}
-              tone={pctTone(market.snapshot.change24hPct)}
+              tone={pctTone(toNumber(market.snapshot.change24hPct))}
               width={112}
               height={36}
             />
@@ -152,11 +177,20 @@ export function MarketsExplorer() {
         case "symbol":
           return a.asset.symbol.localeCompare(b.asset.symbol);
         case "price":
-          return Number(b.snapshot.priceUsdc) - Number(a.snapshot.priceUsdc);
+          return (
+            (toNumber(b.snapshot.priceUsdc) ?? -Infinity) -
+            (toNumber(a.snapshot.priceUsdc) ?? -Infinity)
+          );
         case "change":
-          return b.snapshot.change24hPct - a.snapshot.change24hPct;
+          return (
+            (toNumber(b.snapshot.change24hPct) ?? -Infinity) -
+            (toNumber(a.snapshot.change24hPct) ?? -Infinity)
+          );
         default:
-          return Number(b.snapshot.volume24hUsdc) - Number(a.snapshot.volume24hUsdc);
+          return (
+            (toNumber(b.snapshot.volume24hUsdc) ?? -Infinity) -
+            (toNumber(a.snapshot.volume24hUsdc) ?? -Infinity)
+          );
       }
     });
     return filtered;
@@ -168,6 +202,7 @@ export function MarketsExplorer() {
         <label className="search-field">
           <SearchIcon size={16} />
           <input
+            type="search"
             placeholder="Search markets"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
@@ -185,6 +220,8 @@ export function MarketsExplorer() {
           ).map(([key, label]) => (
             <button
               key={key}
+              type="button"
+              aria-pressed={sort === key}
               className={sort === key ? "is-active" : ""}
               onClick={() => setSort(key)}
             >
@@ -194,7 +231,11 @@ export function MarketsExplorer() {
         </div>
       </div>
 
-      {error.length > 0 && <div className="callout callout-danger">{error}</div>}
+      {error.length > 0 && (
+        <div className="callout callout-danger" role="alert" aria-live="assertive">
+          {error}
+        </div>
+      )}
 
       <div className="market-table-wrap">
         <table className="market-table">
@@ -226,7 +267,7 @@ export function MarketsExplorer() {
                   <Link className="market-cell" href={`/markets/${row.asset.symbol}`}>
                     <AssetMark asset={row.asset} size={34} />
                     <span>
-                      <strong>{row.asset.symbol}</strong>
+                      <strong>{assetDisplayName(row.asset.symbol)}</strong>
                       <small>{row.asset.name}</small>
                     </span>
                   </Link>
@@ -234,19 +275,23 @@ export function MarketsExplorer() {
                 <td className="align-right">
                   <div className="table-price">
                     <strong>{formatPrice(row.snapshot.priceUsdc)}</strong>
-                    <small>tUSDC</small>
+                    <small>{settlementDisplayName()}</small>
                   </div>
                 </td>
-                <td className={`align-right change ${pctTone(row.snapshot.change24hPct)}`}>
-                  {formatPct(row.snapshot.change24hPct)}
+                <td
+                  className={`align-right change ${pctTone(toNumber(row.snapshot.change24hPct))}`}
+                >
+                  {formatPct(toNumber(row.snapshot.change24hPct))}
                 </td>
                 <td className="hide-sm align-right mono">
-                  {formatCompact(row.snapshot.volume24hUsdc)} tUSDC
+                  {formatCompact(row.snapshot.volume24hUsdc)} {settlementDisplayName()}
                 </td>
                 <td className="hide-sm">
                   <span className={`freshness ${row.snapshot.fresh ? "is-fresh" : "is-stale"}`}>
                     <span className="dot" />
-                    {timeAgo(row.snapshot.sourceUpdatedAt)}
+                    {row.snapshot.fresh && toNumber(row.snapshot.sourceUpdatedAt) !== null
+                      ? timeAgo(row.snapshot.sourceUpdatedAt)
+                      : "stale · unavailable"}
                   </span>
                 </td>
                 <td className="align-right">
@@ -270,10 +315,9 @@ export function MarketsExplorer() {
       <div className="explorer-foot">
         <span className={`env-chip ${data?.environment.simulated ? "is-simulated" : "is-live"}`}>
           <span className="env-dot" />
-          {data?.environment.simulated
-            ? "Simulated reference feed"
-            : "Persisted oracle observations"}
+          {environmentShortLabel(data?.environment)}
         </span>
+        <span className="muted small">{priceSourceLabel(data?.environment)}</span>
         <span className="muted small">
           {data === null ? "Loading…" : `Updated ${timeAgo(data.asOf)} · prices refresh every 20s`}
         </span>
@@ -292,24 +336,29 @@ export function HeroMarket() {
         <div className="market-identity">
           {market !== undefined && <AssetMark asset={market.asset} size={40} />}
           <div>
-            <strong>{market?.asset.symbol ?? "tAAPL"}</strong>
-            <span>{market?.asset.name ?? "Apple Inc."}</span>
+            <strong>{assetDisplayName(market?.asset.symbol ?? "tAAPL")}</strong>
+            <span>{market?.asset.name ?? "Simulated test instrument"}</span>
           </div>
         </div>
-        <span className="sim-badge">simulated</span>
+        <span className="sim-badge">
+          {market === undefined ? "checking" : observationBadge(data?.environment, market.snapshot)}
+        </span>
+        {market !== undefined && !market.snapshot.fresh && (
+          <span className="status-pill warn">stale</span>
+        )}
       </div>
       <div className="hero-card-price">
         <span>{market === undefined ? "—" : formatPrice(market.snapshot.priceUsdc)}</span>
-        <small>tUSDC</small>
-        <span className={`change ${pctTone(market?.snapshot.change24hPct)}`}>
-          {formatPct(market?.snapshot.change24hPct)}
+        <small>{settlementDisplayName()}</small>
+        <span className={`change ${pctTone(toNumber(market?.snapshot.change24hPct))}`}>
+          {formatPct(toNumber(market?.snapshot.change24hPct))}
         </span>
       </div>
       <div className="hero-card-chart">
         {market !== undefined && (
           <Sparkline
             points={market.sparkline}
-            tone={pctTone(market.snapshot.change24hPct)}
+            tone={pctTone(toNumber(market.snapshot.change24hPct))}
             width={420}
             height={120}
           />
@@ -330,7 +379,10 @@ export function HeroMarket() {
         </div>
       </div>
       <div className="hero-card-actions">
-        <Link className="button button-primary button-small" href="/markets/tAAPL">
+        <Link
+          className="button button-primary button-small"
+          href={market === undefined ? "/markets" : `/markets/${market.asset.symbol}`}
+        >
           Open market
         </Link>
         <Link className="button button-ghost button-small" href="/markets">

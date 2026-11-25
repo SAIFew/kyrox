@@ -1,0 +1,11 @@
+# Standalone media tooling and generated assets are not part of either web
+# deployment. Keep them in Git/CI where useful, but never upload them to Vercel.
+video/
+content/
+
+# Generated media formats can also appear elsewhere in the repository.
+**/*.mp4
+**/*.webm
+**/*.mov
+**/*.aiff
+**/*.wav

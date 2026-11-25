@@ -14,6 +14,8 @@ import {
 } from "@kyrox/core";
 import { encodeTrade, hashQuote, hashTradeIntent, type UnsignedTransaction } from "@kyrox/protocol";
 
+import { assertCanonicalObservation, type CanonicalObservationReader } from "./observation.js";
+
 export type IntentErrorCode =
   | "WRONG_CHAIN"
   | "TOKEN_MISMATCH"
@@ -37,7 +39,7 @@ export class IntentError extends Error {
   }
 }
 
-export interface SepoliaTokenReader {
+export interface SepoliaTokenReader extends CanonicalObservationReader {
   getChainId(): Promise<number>;
   getTokenDecimals(token: Address): Promise<number>;
 }
@@ -76,6 +78,10 @@ export interface PreparedTradeIntent extends UnsignedTransaction {
   readonly priceUsdcPerWholeToken: bigint;
   readonly sourceRoundId: bigint;
   readonly sourceUpdatedAt: number;
+  readonly sourceKind: PriceObservation["sourceKind"];
+  readonly sourceChainId: number;
+  readonly feedAddress: PriceObservation["feedAddress"];
+  readonly stockDecimals: number;
 }
 
 function mismatch(message: string): never {
@@ -147,6 +153,22 @@ export async function prepareTradeIntent(
     );
   }
 
+  const canonical = await params.reader.readObservation(exchange, asset.stockToken);
+  try {
+    assertCanonicalObservation({
+      observation,
+      canonical,
+      asset,
+      stockDecimals: decimals,
+      nowSeconds,
+    });
+  } catch (error) {
+    if (isCoreError(error)) {
+      throw new IntentError("QUOTE_MISMATCH", error.message);
+    }
+    throw error;
+  }
+
   if (!Number.isInteger(deadline) || deadline <= 0) {
     throw new IntentError("INVALID_DEADLINE", "Deadline must be a positive integer timestamp.");
   }
@@ -186,6 +208,9 @@ export async function prepareTradeIntent(
     recomputed.priceUsdcPerWholeToken !== quote.priceUsdcPerWholeToken ||
     recomputed.sourceRoundId !== quote.sourceRoundId ||
     recomputed.sourceUpdatedAt !== quote.sourceUpdatedAt ||
+    recomputed.sourceKind !== quote.sourceKind ||
+    recomputed.sourceChainId !== quote.sourceChainId ||
+    recomputed.feedAddress !== quote.feedAddress ||
     recomputed.stockToken !== quote.stockToken ||
     recomputed.expiresAt !== quote.expiresAt
   ) {
@@ -212,6 +237,10 @@ export async function prepareTradeIntent(
     deadline,
   });
 
+  // Protocol hash version 1 intentionally keeps its existing ABI encoding for
+  // golden-vector compatibility. Decimals and full provenance are validated
+  // above, retained on the returned intent, and bound by the server quote HMAC;
+  // changing this protocol-owned hash requires a coordinated version upgrade.
   const quoteHash = hashQuote({
     chainId: BASE_SEPOLIA_CHAIN_ID,
     stockToken: asset.stockToken,
@@ -255,6 +284,10 @@ export async function prepareTradeIntent(
     priceUsdcPerWholeToken: recomputed.priceUsdcPerWholeToken,
     sourceRoundId: recomputed.sourceRoundId,
     sourceUpdatedAt: recomputed.sourceUpdatedAt,
+    sourceKind: recomputed.sourceKind,
+    sourceChainId: recomputed.sourceChainId,
+    feedAddress: recomputed.feedAddress,
+    stockDecimals: recomputed.stockDecimals,
   };
 }
 

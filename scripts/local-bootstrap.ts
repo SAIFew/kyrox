@@ -22,8 +22,12 @@ const MANIFEST = process.env["KYROX_DEPLOYMENT_MANIFEST"] ?? "deployments/local-
 
 const ASSETS = [
   { symbol: "tAAPL", name: "Test Apple", price: 345_297_696n },
-  { symbol: "tTSLA", name: "Test Tesla", price: 350_450_000n },
   { symbol: "tNVDA", name: "Test NVIDIA", price: 129_824_800n },
+  { symbol: "tMSFT", name: "Test Microsoft", price: 430_150_000n },
+  { symbol: "tGOOGL", name: "Test Google", price: 190_420_000n },
+  { symbol: "tAMZN", name: "Test Amazon", price: 220_780_000n },
+  { symbol: "tTSLA", name: "Test Tesla", price: 350_450_000n },
+  { symbol: "tMETA", name: "Test Meta", price: 610_000_000n },
 ];
 
 function artifact(name: string): { abi: Abi; bytecode: Hex } {
@@ -103,7 +107,7 @@ async function main() {
   for (const asset of ASSETS) {
     await call(
       exchange,
-      callData(exchangeAbi, "listAsset", [stocks[asset.symbol], 3_600, 1n, 10n ** 12n]),
+      callData(exchangeAbi, "listAsset", [stocks[asset.symbol], 600, 1n, 10n ** 12n]),
     );
     await call(
       exchange,
@@ -169,7 +173,7 @@ async function main() {
             {
               address: stocks[asset.symbol],
               verified: false,
-              maxSourceAgeSeconds: 3_600,
+              maxSourceAgeSeconds: 600,
               maxPriceDeviationBps: 500,
               minPriceUsdcPerWholeToken: "1",
               maxPriceUsdcPerWholeToken: "1000000000000",

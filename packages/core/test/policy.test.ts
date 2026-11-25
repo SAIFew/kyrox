@@ -23,7 +23,15 @@ describe("testnet policy constants", () => {
     expect(policy.minTradeUsdc).toBe(1n * USDC);
     expect(policy.maxTradeUsdc).toBe(1_000n * USDC);
     expect(policy.dailyLimitUsdc).toBe(5_000n * USDC);
-    expect(policy.allowedAssets).toEqual(["tAAPL", "tTSLA", "tNVDA"]);
+    expect(policy.allowedAssets).toEqual([
+      "tAAPL",
+      "tNVDA",
+      "tMSFT",
+      "tGOOGL",
+      "tAMZN",
+      "tTSLA",
+      "tMETA",
+    ]);
   });
 
   it("rejects a self-inconsistent configuration instead of guessing", () => {
@@ -130,6 +138,15 @@ describe("price and quote validity", () => {
   it("rejects a quote whose source timestamp was mutated backwards", () => {
     const tampered: Quote = { ...buildQuote(), sourceUpdatedAt: NOW - 500 };
     expect(codes(tampered)).toContain("STALE_PRICE");
+  });
+
+  it("rejects invalid runtime side and decimals instead of guessing", () => {
+    expect(() => codes({ ...buildQuote(), side: "hold" as never })).toThrow(
+      expect.objectContaining({ code: "INVALID_SIDE" }),
+    );
+    expect(() => codes({ ...buildQuote(), stockDecimals: 12 as never })).toThrow(
+      expect.objectContaining({ code: "INVALID_DECIMALS" }),
+    );
   });
 
   it("rejects a tampered price, round id, or chain id", () => {

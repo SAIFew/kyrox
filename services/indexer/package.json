@@ -9,6 +9,12 @@
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
+  "dependencies": {
+    "@kyrox/core": "workspace:*",
+    "@kyrox/db": "workspace:*",
+    "@kyrox/protocol": "workspace:*",
+    "viem": "2.58.4"
+  },
   "devDependencies": {
     "typescript": "5.9.3"
   }

@@ -1,7 +1,9 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 
 import {
+  BASE_SEPOLIA_CHAIN_ID,
   CoreError,
+  DEFAULT_QUOTE_TTL_SECONDS,
   createQuote,
   isCoreError,
   type Address,
@@ -23,6 +25,7 @@ import {
   type PreparedTradeIntent,
   type SepoliaTokenReader,
 } from "./intent.js";
+import { assertCanonicalObservation } from "./observation.js";
 
 export interface AuthenticatedSession {
   /** Wallet ownership established by the authentication layer, never by the client body. */
@@ -105,6 +108,7 @@ export interface IssuedQuoteResult {
   readonly quoteToken: string;
   readonly quote: Quote;
   readonly expiresAt: number;
+  readonly ttlSeconds: number;
 }
 
 export interface PreparedIssuedIntent extends PreparedTradeIntent {
@@ -123,7 +127,9 @@ export class QuoteServiceError extends Error {
       | "QUOTE_REPLAYED"
       | "QUOTE_ASSET_MISMATCH"
       | "QUOTE_TTL_TOO_LONG"
-      | "POLICY_SOURCE_INVALID",
+      | "POLICY_SOURCE_INVALID"
+      | "TRADING_PAUSED"
+      | "ACCOUNT_BANNED",
     message: string,
   ) {
     super(message);
@@ -146,12 +152,16 @@ export class QuoteService {
   readonly #policy: TrustedPolicySource;
   readonly #policyConfig: TradePolicyConfig;
   readonly #maxTtlSeconds: number;
+  readonly #exchange: Address;
+  readonly #reader: SepoliaTokenReader;
 
   constructor(deps: {
     secret: string;
     store: IssuedQuoteStore;
     policy: TrustedPolicySource;
     policyConfig: TradePolicyConfig;
+    exchange: Address;
+    reader: SepoliaTokenReader;
     maxTtlSeconds?: number;
   }) {
     if (deps.secret.length < MIN_SECRET_LENGTH) {
@@ -160,7 +170,7 @@ export class QuoteService {
         "Quote secret must be at least 32 characters.",
       );
     }
-    const maxTtl = deps.maxTtlSeconds ?? 60;
+    const maxTtl = deps.maxTtlSeconds ?? DEFAULT_QUOTE_TTL_SECONDS;
     if (!Number.isInteger(maxTtl) || maxTtl <= 0 || maxTtl > MAX_TTL_SECONDS) {
       throw new QuoteServiceError(
         "QUOTE_TTL_TOO_LONG",
@@ -172,6 +182,8 @@ export class QuoteService {
     this.#policy = deps.policy;
     this.#policyConfig = deps.policyConfig;
     this.#maxTtlSeconds = maxTtl;
+    this.#exchange = deps.exchange;
+    this.#reader = deps.reader;
   }
 
   async issueQuote(params: IssueQuoteParams): Promise<IssuedQuoteResult> {
@@ -185,6 +197,27 @@ export class QuoteService {
         `Asset ${params.asset.symbol} has no deployed token.`,
       );
     }
+    const stockToken = params.asset.stockToken;
+
+    const chainId = await this.#reader.getChainId();
+    if (chainId !== BASE_SEPOLIA_CHAIN_ID) {
+      throw new IntentError("WRONG_CHAIN", `RPC is on chain ${chainId}, expected 84532.`);
+    }
+    const stockDecimals = await this.#reader.getTokenDecimals(stockToken);
+    if (stockDecimals !== params.asset.stockDecimals) {
+      throw new IntentError(
+        "DECIMALS_MISMATCH",
+        `Token reports ${stockDecimals} decimals but the asset declares ${params.asset.stockDecimals}.`,
+      );
+    }
+    const canonical = await this.#reader.readObservation(this.#exchange, stockToken);
+    assertCanonicalObservation({
+      observation: params.observation,
+      canonical,
+      asset: params.asset,
+      stockDecimals,
+      nowSeconds: now,
+    });
 
     const freshness = this.#policy.freshnessFor(params.asset.symbol);
     const priceBounds = this.#policy.priceBoundsFor(params.asset.symbol);
@@ -232,7 +265,13 @@ export class QuoteService {
       used: false,
     };
     await this.#store.save(record);
-    return { quoteId: id, quoteToken: token, quote, expiresAt: quote.expiresAt };
+    return {
+      quoteId: id,
+      quoteToken: token,
+      quote,
+      expiresAt: quote.expiresAt,
+      ttlSeconds: this.#maxTtlSeconds,
+    };
   }
 
   async prepareIntent(params: PrepareIssuedIntentParams): Promise<PreparedIssuedIntent> {
@@ -307,6 +346,8 @@ export class QuoteService {
   }
 
   #sign(id: string, trader: Address, quote: Quote): string {
+    // The protocol v1 quote hash is unchanged for golden-vector compatibility.
+    // This server-only HMAC additionally binds decimals and full provenance.
     const payload = [
       id,
       trader.toLowerCase(),
@@ -318,6 +359,10 @@ export class QuoteService {
       quote.sourceRoundId.toString(),
       quote.sourceUpdatedAt.toString(),
       quote.expiresAt.toString(),
+      quote.stockDecimals.toString(),
+      quote.sourceKind,
+      quote.sourceChainId.toString(),
+      (quote.feedAddress ?? "").toLowerCase(),
       hashQuote({
         chainId: quote.chainId,
         stockToken: quote.stockToken as Address,
