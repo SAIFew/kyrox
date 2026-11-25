@@ -178,7 +178,7 @@ jobs:
 
           const asset = (suffix) => ({
             address: `0x${suffix.repeat(40)}`,
-            maxSourceAgeSeconds: 3600,
+            maxSourceAgeSeconds: 600,
             maxPriceDeviationBps: 500,
             minPriceUsdcPerWholeToken: "1",
             maxPriceUsdcPerWholeToken: "1000000000000",
@@ -196,8 +196,12 @@ jobs:
               },
               assets: {
                 tAAPL: asset("3"),
-                tTSLA: asset("4"),
-                tNVDA: asset("5"),
+                tNVDA: asset("4"),
+                tMSFT: asset("5"),
+                tGOOGL: asset("6"),
+                tAMZN: asset("7"),
+                tTSLA: asset("8"),
+                tMETA: asset("9"),
               },
             }, null, 2)}\n`,
           );
@@ -282,7 +286,7 @@ jobs:
           assert.equal(assets.mode, "base-sepolia");
           assert.equal(assets.simulated, false);
           assert.equal(assets.exchange, `0x${"2".repeat(40)}`);
-          assert.equal(assets.assets.length, 3);
+          assert.equal(assets.assets.length, 7);
           assert.ok(assets.assets.every((asset) => asset.fresh === false && asset.priceUsdc === null));
           console.log("Live-mode health and database-backed asset smoke passed without RPC access.");
           NODE
@@ -555,6 +559,7 @@ jobs:
       - name: Run cross-surface runtime invariant and secret-scanner regression tests
         env:
           KYROX_REQUIRE_CROSS_SURFACE_RUNTIME: "1"
+          KYROX_MCP_PYTHON: python
         run: pnpm vitest run packages/core/test/cross-surface-invariants.test.ts packages/core/test/secret-scanner.test.ts
 
   secrets:

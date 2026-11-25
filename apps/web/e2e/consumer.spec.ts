@@ -51,7 +51,7 @@ test("preview consumer can browse, quote, simulate a fill, and audit it", async 
   await expect(dialog).toBeHidden();
   await expect(page.locator(".account-tag")).toHaveText("demo");
 
-  await page.getByRole("textbox", { name: "Amount in USDC" }).fill("10");
+  await page.getByRole("textbox", { name: /Amount in/ }).fill("10");
   const [quoteResponse] = await Promise.all([
     page.waitForResponse(
       (response) =>
@@ -69,7 +69,7 @@ test("preview consumer can browse, quote, simulate a fill, and audit it", async 
     };
   };
   expect(quotePayload.quote?.quoteId).toEqual(expect.any(String));
-  expect(quotePayload.quote?.ttlSeconds).toBe(120);
+  expect(quotePayload.quote?.ttlSeconds).toBe(30);
   expect(quotePayload.quote?.simulated).toBe(true);
   expect(quotePayload.quote?.simulatedPrice).toBe(true);
 

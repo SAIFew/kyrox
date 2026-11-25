@@ -110,13 +110,15 @@ test("local-Anvil wallet can authenticate, approve exactly, trade, and see activ
   await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
   await expect(page.locator(".account-tag")).toHaveCount(0);
 
-  const faucet = page.getByRole("button", { name: "Claim test USDC" });
+  const faucet = page
+    .locator("article", { hasText: "Welcome grant" })
+    .getByRole("button", { name: "Claim", exact: true });
   await faucet.click();
   await expect(faucet).toBeEnabled();
 
   await page.goto("/markets/tAAPL");
   await expect(page.getByRole("heading", { name: "Test Apple", exact: true })).toBeVisible();
-  await page.getByRole("textbox", { name: "Amount in USDC" }).fill("1");
+  await page.getByRole("textbox", { name: /Amount in/ }).fill("1");
   const [quoteResponse] = await Promise.all([
     page.waitForResponse(
       (response) =>

@@ -60,6 +60,29 @@ export function canonicalAppOrigin(raw: string | undefined, mode: RuntimeMode): 
 }
 
 /**
+ * Reconstruct a loopback request origin from the Host header.
+ *
+ * Next can report `req.url` with a normalized host that differs from the address
+ * the browser used (`localhost` vs `127.0.0.1`). For loopback development only,
+ * trust the Host header so an exact Origin comparison still works. Non-loopback
+ * deployments must set APP_ORIGIN; this fallback never trusts a public Host.
+ */
+function loopbackRequestOrigin(req: Request): string | null {
+  const host = req.headers.get("host")?.trim();
+  if (host === undefined || host.length === 0) return null;
+  let hostname: string;
+  try {
+    hostname = new URL(`http://${host}`).hostname;
+  } catch {
+    return null;
+  }
+  if (!isLoopbackHostname(hostname)) return null;
+  const forwarded = req.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
+  const protocol = forwarded === "https" ? "https" : "http";
+  return `${protocol}://${host}`;
+}
+
+/**
  * Resolve the approved origin for a server request.
  *
  * A configured APP_ORIGIN (or the existing public metadata URL as a migration
@@ -82,7 +105,10 @@ export function appOriginForRequest(req: Request): string {
   if (runtimeMode() === "base-sepolia") {
     return canonicalAppOrigin(undefined, "base-sepolia");
   }
-  return new URL(req.url).origin;
+  const loopback = loopbackRequestOrigin(req);
+  if (loopback !== null) return loopback;
+  // Fail closed rather than trusting an arbitrary public Host header.
+  return canonicalAppOrigin(undefined, "base-sepolia");
 }
 
 /** SIWE domain and URI values derived only from the approved origin. */

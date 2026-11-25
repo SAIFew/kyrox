@@ -100,7 +100,7 @@ DEMO_URL="http://127.0.0.1:$DEMO_PORT"
 (
   cd "$BUILD_ROOT"
   exec env KYROX_DEMO_MODE=1 KYROX_ENVIRONMENT=demo DATABASE_URL= \
-    "$NEXT_BIN" start -p "$DEMO_PORT"
+    APP_ORIGIN="$DEMO_URL" "$NEXT_BIN" start -p "$DEMO_PORT"
 ) >"$DEMO_LOG" 2>&1 &
 DEMO_PID=$!
 wait_for_http "$DEMO_URL/api/auth/session" "$DEMO_PID" "$DEMO_LOG"
@@ -133,6 +133,7 @@ export BASE_SEPOLIA_RPC_URL="http://127.0.0.1:$ANVIL_PORT"
 export APP_PORT APP_URL
 export KYROX_ENVIRONMENT=local-anvil
 export KYROX_DEMO_MODE=0
+export APP_ORIGIN="$APP_URL"
 export KYROX_DEPLOYMENT_MANIFEST="$MANIFEST_PATH"
 export KYROX_E2E_BUILD_ROOT="$BUILD_ROOT"
 export KYROX_E2E_NEXT_BIN="$NEXT_BIN"

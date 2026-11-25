@@ -1344,8 +1344,16 @@ pre,
 .page-head-actions {
   align-items: center;
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
+  max-width: 100%;
+  min-width: 0;
   padding-bottom: 4px;
+}
+
+.page-head > * {
+  max-width: 100%;
+  min-width: 0;
 }
 
 .notice-strip {
@@ -4066,5 +4074,13 @@ pre,
 
   .basket-leg {
     grid-template-columns: 1fr 1fr auto;
+  }
+}
+
+@media (max-width: 380px) {
+  .portfolio-value .change.large {
+    flex-wrap: wrap;
+    max-width: 100%;
+    white-space: normal;
   }
 }
