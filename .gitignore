@@ -79,3 +79,15 @@ content/**/final/*.png
 content/**/final/**/*.png
 content/**/slides/*.png
 content/**/preview.png
+
+# Captured/rendered media stays outside Git history. Keep small source scripts
+# and vector brand assets; archive raw recordings and derived exports separately.
+video/**/*.webm
+video/**/*.mp4
+video/**/*.mov
+video/**/*.aiff
+video/**/*.wav
+video/**/*.mp3
+content/kyrox-showcase-vertical/output/
+content/kyrox-showcase-vertical/public/*.wav
+apps/marketing/public/assets/social/campaign-reset/*.png
